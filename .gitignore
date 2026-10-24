@@ -1,0 +1,26 @@
+node_modules/
+dist/
+# Original game data (copyrighted, never commit)
+iso/
+original/
+public/gamedata/
+research/decoded/
+research/external/
+tools/bin/
+test-results/
+playwright-report/
+*.log
+tools/.venv/
+tools/re/
+
+research/
+tools/explore/__pycache__/
+__pycache__/
+*.pyc
+docs/campaign/*.json
+extracted/
+*.iso
+*.avi
+*.mp4
+*.exe
+*.dll

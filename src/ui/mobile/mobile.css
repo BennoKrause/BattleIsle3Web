@@ -1,0 +1,212 @@
+/* Phone interface (class "mobile-ui" on <body>), styled after the original game: mottled green metal with bevelled
+   edges, dark-blue text fields, yellow command icons, original bitmap fonts (drawn as canvases, see pixel.ts).
+   Textures and colours come from the original bitmaps via CSS variables set in theme.ts. */
+body.mobile-ui {
+  --tex-light: none;
+  --tex-dark: none;
+  --field: #1d4154;
+  --field-edge: #6cb9b3;
+  --yellow: #ffe433;
+  --yellow-hi: #ffff6a;
+  --yellow-lo: #907921;
+  --text: #c4e89c;
+  --muted: #84a967;
+  --accent: #ffe433;
+  --bevel-hi: #a8cfa4;
+  --bevel-lo: #0b1f0d;
+  --bg: #0b190d;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+  font-family: system-ui, sans-serif;
+  color: var(--text);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  background: #000;
+}
+body.mobile-ui #app { position: fixed; inset: 0; }
+body.mobile-ui .mobile-root { position: fixed; inset: 0; width: 100%; height: 100%; transform: none; background-size: cover; background-position: center; }
+body.mobile-ui .desktop-layer { position: absolute; inset: 0; }
+body.mobile-ui canvas { image-rendering: pixelated; }
+body.mobile-ui button { font: inherit; color: inherit; padding: 0; margin: 0; }
+
+/* text drawn with the original fonts; the real text stays for assistive technology */
+body.mobile-ui .m-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+body.mobile-ui .m-px { display: block; max-width: 100%; height: auto !important; }
+body.mobile-ui .m-px-line { line-height: 0; margin-bottom: 4px; }
+
+/* ---------------------------------------------------------------- metal panels, fields, wells */
+body.mobile-ui .m-top, body.mobile-ui .m-dock, body.mobile-ui .m-card, body.mobile-ui .m-bsheet, body.mobile-ui .m-dialog, body.mobile-ui .m-sheet-head {
+  background-color: #2f6b34;
+  background-image: var(--tex-light);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-sizing: border-box;
+}
+body.mobile-ui .m-sheet-body, body.mobile-ui .m-list {
+  background-color: #1f4a24;
+  background-image: var(--tex-dark);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+  box-sizing: border-box;
+}
+body.mobile-ui .m-field {
+  background: var(--field);
+  border: 1px solid;
+  border-color: #07141b var(--field-edge) var(--field-edge) #07141b;
+  box-shadow: inset 0 0 0 1px #0a2230;
+  padding: 7px 10px;
+  box-sizing: border-box;
+}
+body.mobile-ui .m-icon-well {
+  flex: none; width: 56px; height: 56px; display: flex; align-items: center; justify-content: center;
+  background-color: #1f4a24; background-image: var(--tex-dark);
+  border: 2px solid; border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+  box-sizing: border-box;
+}
+body.mobile-ui .m-unit-icon { width: 48px; height: 48px; }
+
+/* original icon buttons (three-state bitmaps) */
+body.mobile-ui .m-icon-btn {
+  flex: none; border: 0; background-color: transparent; background-repeat: no-repeat; background-size: 100% 100%; image-rendering: pixelated;
+  width: calc(var(--iw, 32px) * 1.7); height: calc(var(--ih, 31px) * 1.7);
+}
+
+/* ---------------------------------------------------------------- start screen */
+body.mobile-ui .start-overlay { position: absolute; inset: 0; z-index: 9800; background: rgba(0, 0, 0, 0.86); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 24px; }
+body.mobile-ui .m-start-title, body.mobile-ui .m-start-sub, body.mobile-ui .m-start-tap { margin: 0; }
+body.mobile-ui .m-start-tap { margin-top: 34px; animation: m-pulse 1.4s ease-in-out infinite; }
+@keyframes m-pulse { 50% { opacity: 0.35; } }
+
+/* ---------------------------------------------------------------- videos */
+body.mobile-ui .video-full { z-index: 9000; }
+body.mobile-ui .video-el { max-width: 100%; max-height: 100%; width: 100%; object-fit: contain; }
+body.mobile-ui .m-skip {
+  position: absolute; right: 12px; bottom: calc(14px + var(--safe-b)); z-index: 2; min-height: 44px; padding: 0 18px;
+  background: #1f4a24 var(--tex-dark); border: 2px solid; border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi); color: var(--accent); font-size: 15px;
+}
+
+/* ---------------------------------------------------------------- command buttons (like the chip window) */
+body.mobile-ui .m-cmd {
+  min-height: 60px; min-width: 64px; flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 4px 8px;
+  background-color: #1f4a24; background-image: var(--tex-dark);
+  border: 2px solid; border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+}
+body.mobile-ui .m-cmd:active { border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); }
+body.mobile-ui .m-cmd:disabled { opacity: 0.4; }
+body.mobile-ui .m-cmd.m-primary { border-color: var(--yellow) var(--yellow-lo) var(--yellow-lo) var(--yellow); }
+body.mobile-ui .m-cmd-icon { width: 38px; height: 36px; background-size: contain; background-repeat: no-repeat; background-position: center; image-rendering: pixelated; }
+body.mobile-ui .m-cmd-label { display: block; }
+
+/* ---------------------------------------------------------------- menus (full screen lists, like the SETUP menus) */
+body.mobile-ui .m-sheet { position: absolute; inset: 0; z-index: 5000; display: flex; flex-direction: column; padding: calc(10px + var(--safe-t)) 10px calc(10px + var(--safe-b)); box-sizing: border-box; background: rgba(0, 0, 0, 0.35); }
+body.mobile-ui .m-sheet-head { display: flex; align-items: center; gap: 8px; padding: 6px; }
+body.mobile-ui .m-sheet-title { flex: 1; min-width: 0; }
+body.mobile-ui .m-title { margin: 0; }
+body.mobile-ui .m-list { flex: 1; overflow-y: auto; margin-top: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+body.mobile-ui .m-item {
+  display: flex; align-items: center; gap: 14px; min-height: 58px; padding: 6px 12px; text-align: left;
+  background: rgba(8, 26, 12, 0.72); border: 1px solid; border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+body.mobile-ui .m-item:active { background: rgba(60, 100, 40, 0.6); }
+body.mobile-ui .m-item:disabled { opacity: 0.55; }
+body.mobile-ui .m-item-mark { flex: none; width: 36px; height: 24px; background-size: 100% 100%; background-repeat: no-repeat; image-rendering: pixelated; }
+body.mobile-ui .m-item-text { min-width: 0; }
+
+/* ---------------------------------------------------------------- dialogs */
+body.mobile-ui .m-modal { position: absolute; inset: 0; z-index: 9500; background: rgba(0, 0, 0, 0.7); display: flex; align-items: center; justify-content: center; padding: 20px; }
+body.mobile-ui .m-dialog { width: 100%; max-width: 380px; max-height: 85dvh; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+body.mobile-ui .m-dialog-title { margin: 0; }
+body.mobile-ui .m-dialog-text { margin: 0; padding: 12px; background: rgba(8, 26, 12, 0.7); border: 1px solid; border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); }
+body.mobile-ui .m-input { width: 100%; box-sizing: border-box; min-height: 52px; font-size: 22px; padding: 0 12px; background: var(--field); color: var(--accent); border: 1px solid; border-color: #07141b var(--field-edge) var(--field-edge) #07141b; }
+body.mobile-ui .m-row { display: flex; gap: 10px; }
+
+/* ---------------------------------------------------------------- game screen */
+body.mobile-ui .m-game { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+body.mobile-ui .m-top { display: flex; align-items: center; gap: 8px; padding: calc(5px + var(--safe-t)) 6px 5px; z-index: 3; }
+body.mobile-ui .m-top-title { flex: 1; min-width: 0; padding: 5px 9px; }
+body.mobile-ui .m-top-sub { display: flex; gap: 12px; margin-top: 3px; }
+body.mobile-ui .m-waiting .m-top-title { background: #4a3a14; }
+body.mobile-ui .m-map { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #3c4040; }
+body.mobile-ui .m-map-canvas { position: absolute; left: 0; top: 0; touch-action: none; cursor: default; }
+body.mobile-ui .m-zoom { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 8px; z-index: 2; }
+body.mobile-ui .m-zoom-btn {
+  width: 46px; height: 46px; display: flex; align-items: center; justify-content: center;
+  background-color: #1f4a24; background-image: var(--tex-dark); opacity: 0.92;
+  border: 2px solid; border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+}
+body.mobile-ui .m-toasts { position: absolute; left: 10px; right: 66px; top: 10px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 2; }
+body.mobile-ui .m-toast { align-self: flex-start; padding: 7px 11px; background: var(--field); border: 1px solid; border-color: #07141b var(--field-edge) var(--field-edge) #07141b; }
+
+body.mobile-ui .m-card { padding: 8px 10px; z-index: 3; }
+body.mobile-ui .m-card[hidden] { display: none; }
+body.mobile-ui .m-card-head { display: flex; gap: 10px; align-items: stretch; }
+body.mobile-ui .m-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+body.mobile-ui .m-card-text .m-field { padding: 5px 9px; }
+body.mobile-ui .m-card-title, body.mobile-ui .m-card-sub, body.mobile-ui .m-card-stats { line-height: 0; margin-bottom: 2px; }
+body.mobile-ui .m-bar { height: 8px; background: #07141b; border: 1px solid; border-color: #07141b var(--field-edge) var(--field-edge) #07141b; box-sizing: border-box; }
+body.mobile-ui .m-bar-fill { height: 100%; background: #4cc040; }
+body.mobile-ui .m-bar-fill.m-low { background: #e0c820; }
+body.mobile-ui .m-bar-fill.m-crit { background: #e03820; }
+body.mobile-ui .m-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
+body.mobile-ui .m-dock { display: flex; gap: 4px; padding: 4px 4px calc(4px + var(--safe-b)); z-index: 3; }
+body.mobile-ui .m-dock-btn {
+  flex: 1; min-height: 62px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 2px;
+  background: rgba(8, 26, 12, 0.35); border: 1px solid; border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+body.mobile-ui .m-dock-btn:active { background: rgba(60, 100, 40, 0.5); }
+body.mobile-ui .m-dock-btn:disabled { opacity: 0.45; }
+body.mobile-ui .m-dock-icon { width: 41px; height: 36px; background-size: 100% 100%; background-repeat: no-repeat; image-rendering: pixelated; }
+body.mobile-ui .m-dock-btn.m-end { flex: 1.35; background: rgba(40, 100, 40, 0.55); border: 2px solid; border-color: var(--yellow) var(--yellow-lo) var(--yellow-lo) var(--yellow); }
+
+/* ---------------------------------------------------------------- bottom sheets */
+body.mobile-ui .m-backdrop { position: absolute; inset: 0; z-index: 6000; background: rgba(0, 0, 0, 0.55); display: flex; align-items: flex-end; }
+body.mobile-ui .m-bsheet { width: 100%; max-height: 90dvh; display: flex; flex-direction: column; animation: m-up 0.16s ease-out; padding: 6px; gap: 6px; }
+@keyframes m-up { from { transform: translateY(40px); opacity: 0; } }
+body.mobile-ui .m-bsheet .m-sheet-head { background: transparent; border: 0; padding: 0; }
+body.mobile-ui .m-bsheet .m-sheet-title { padding: 8px 10px; }
+body.mobile-ui .m-sheet-body { overflow-y: auto; padding: 10px 10px calc(14px + var(--safe-b)); display: flex; flex-direction: column; gap: 9px; }
+body.mobile-ui .m-info-desc { line-height: 0; }
+body.mobile-ui .m-anim-frame { align-self: center; width: 100%; max-width: 480px; padding: 4px; background: #02070a; border: 2px solid; border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); box-sizing: border-box; }
+body.mobile-ui .m-info-anim, body.mobile-ui .m-overview-canvas { display: block; width: 100%; aspect-ratio: 8 / 5; image-rendering: pixelated; background: #000; }
+body.mobile-ui .m-overview-canvas { aspect-ratio: 178 / 138; }
+body.mobile-ui .m-info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+body.mobile-ui .m-cell { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 44px; }
+body.mobile-ui .m-cell-icon { width: 24px; height: 24px; flex: none; image-rendering: pixelated; }
+body.mobile-ui .m-cell-label { flex: 1; line-height: 0; }
+body.mobile-ui .m-cell-value { line-height: 0; }
+body.mobile-ui .m-props { display: flex; flex-direction: column; gap: 5px; }
+body.mobile-ui .m-prop { display: flex; align-items: center; gap: 10px; }
+body.mobile-ui .m-section { margin: 4px 0 0; line-height: 0; }
+body.mobile-ui .m-weapon {
+  display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 6px 8px; text-align: left;
+  background: rgba(8, 26, 12, 0.6); border: 2px solid; border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); box-sizing: border-box;
+}
+body.mobile-ui button.m-weapon:active { background: rgba(60, 100, 40, 0.6); }
+body.mobile-ui .m-weapon.m-static { min-height: 0; }
+body.mobile-ui .m-weapon.m-selected { border-color: var(--yellow) var(--yellow-lo) var(--yellow-lo) var(--yellow); }
+body.mobile-ui .m-weapon:disabled { opacity: 0.45; }
+body.mobile-ui .m-w-ammo { flex: none; min-width: 40px; display: flex; justify-content: center; padding: 5px 6px; }
+body.mobile-ui .m-w-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+body.mobile-ui .m-w-name, body.mobile-ui .m-w-sub { display: block; line-height: 0; }
+body.mobile-ui .m-w-targets { display: flex; gap: 2px; flex: none; }
+body.mobile-ui .m-target { width: 19px; height: 17px; opacity: 0.35; }
+body.mobile-ui .m-target.on { opacity: 1; }
+body.mobile-ui .m-line { margin: 0; }
+body.mobile-ui .m-shop-head { display: flex; flex-direction: column; gap: 4px; }
+body.mobile-ui .m-shop-title, body.mobile-ui .m-shop-sub { line-height: 0; }
+body.mobile-ui .m-menu-sheet .m-item { width: 100%; }
+
+/* ---------------------------------------------------------------- fight */
+/* the 3D picture fills the whole screen; the statistics strip lies over its lower edge, the skip button over the upper right */
+body.mobile-ui .m-fight { position: absolute; inset: 0; z-index: 8000; background: #000; }
+body.mobile-ui .m-fight-stage { position: absolute; inset: 0; }
+body.mobile-ui .m-fight-view { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; image-rendering: auto; display: block; }
+body.mobile-ui .m-fight-panel { position: absolute; left: 0; right: 0; bottom: var(--safe-b); overflow: hidden; }
+body.mobile-ui .m-fight-panel-inner { width: 640px; height: 73px; position: relative; transform-origin: 0 0; }
+body.mobile-ui .m-fight-panel-inner .fightpanel { position: absolute; left: 0; top: 0; }
+body.mobile-ui .m-fight-skip { position: absolute; right: 10px; top: calc(10px + var(--safe-t)); flex: none; min-width: 0; min-height: 48px; padding: 0 14px; }
+
+/* the desktop helpers for flash messages and turn banners are not used on phones */
+body.mobile-ui .flash, body.mobile-ui .turnbanner { display: none; }

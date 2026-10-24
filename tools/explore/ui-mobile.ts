@@ -1,0 +1,23 @@
+import { chromium, devices } from '@playwright/test';
+const out = process.argv[2];
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ ...devices['iPhone 13'] });
+const page = await ctx.newPage();
+page.on('pageerror', (e) => console.log('pageerror', e.message));
+page.on('console', (m) => { if (m.type() === 'error') console.log('console', m.text()); });
+await page.goto('http://localhost:5173/?nointro');
+await page.waitForSelector('.m-item', { timeout: 30000 });
+await page.screenshot({ path: `${out}/m_menu.png` });
+await page.goto('http://localhost:5173/?mission=100');
+await page.waitForFunction(() => (window as any).bi3app?.running);
+for (let i = 0; i < 8; i++) { const sk = page.locator('.m-skip'); if (await sk.count()) { await sk.first().click(); } await page.waitForTimeout(250); }
+await page.waitForTimeout(600);
+await page.screenshot({ path: `${out}/m_game.png` });
+const pos = await page.evaluate(() => { const a = (window as any).bi3app, g = a.running.game; const u = g.unitsOf(0).find((x: any) => g.moveArea(x.id).targets.size > 3); return a.running.screen.fieldToClient(g.w.idx(u.x, u.y)); });
+await page.touchscreen.tap(pos.x, pos.y);
+await page.waitForTimeout(500);
+await page.screenshot({ path: `${out}/m_card.png` });
+await page.click('[data-action="info"]');
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${out}/m_info.png` });
+await browser.close();

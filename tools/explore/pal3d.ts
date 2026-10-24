@@ -1,0 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { parseLib } from '../../src/formats/lib.ts';
+import { parseIffPbm } from '../../src/formats/iff.ts';
+const pals = parseLib(readFileSync('public/gamedata/FGT/PAL000.LIB'));
+const tex = parseIffPbm(parseLib(readFileSync('public/gamedata/FGT/TEX000.LIB')).find((e) => e.name === 'TEX007')!.data);
+const cm = tex.palette!;
+const same = (a: Uint8Array, b: Uint8Array) => { let d = 0; const idx: number[] = []; for (let i = 0; i < 256; i++) if (a[i * 3] !== b[i * 3] || a[i * 3 + 1] !== b[i * 3 + 1] || a[i * 3 + 2] !== b[i * 3 + 2]) { d++; if (idx.length < 6) idx.push(i); } return `${d} differ e.g. ${idx.join(',')}`; };
+console.log('IFF cmap vs PAL3D00', same(cm, pals[0].data));
+for (const k of [1, 2, 3, 4, 8, 16, 32, 79]) console.log('PAL3D00 vs', pals[k].name, same(pals[0].data, pals[k].data));
+console.log('max value in PAL3D00', Math.max(...pals[0].data), 'cmap', Math.max(...cm));
+const hex = (p: Uint8Array, i: number) => [0, 1, 2].map((k) => p[i * 3 + k].toString(16).padStart(2, '0')).join('');
+console.log('idx 0xc0..0xc8 cmap', Array.from({ length: 8 }, (_, i) => hex(cm, 0xc0 + i)).join(' '));
+console.log('idx 0xc0..0xc8 pal0', Array.from({ length: 8 }, (_, i) => hex(pals[0].data, 0xc0 + i)).join(' '));
