@@ -46,7 +46,8 @@ export class VideoPlayer {
           const e = el('div', 'frame-piece', box, { left: `${x}px`, top: `${y}px`, width: `${c.width}px`, height: `${c.height}px` });
           e.style.backgroundImage = `url(${c.toDataURL()})`;
         };
-        frame('01', 40, 0); frame('02', 0, 0); frame('03', 40, 270); frame('04', 360, 0);
+        // 02 is the right side (dark outer edge on its right), 04 the left side
+        frame('01', 40, 0); frame('04', 0, 0); frame('03', 40, 270); frame('02', 360, 0);
       }
       const video = el('video', 'video-el', box);
       if (document.body.classList.contains('mobile-ui')) {
