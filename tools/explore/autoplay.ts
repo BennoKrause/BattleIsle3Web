@@ -3,14 +3,14 @@ import { NodeSource } from '../lib/node-source.ts';
 import { loadGameData } from '../../src/data/gamedata.ts';
 import { createGame } from '../../src/engine/setup.ts';
 import { Game } from '../../src/engine/game.ts';
-import { ComputerPlayer } from '../../src/engine/ai.ts';
+import { OriginalAI } from '../../src/engine/ai-original.ts';
 import { Difficulty } from '../../src/engine/rules.ts';
 const data = await loadGameData(new NodeSource());
 const id = Number(process.argv[2] ?? 100), maxTurns = Number(process.argv[3] ?? 40);
 const lm = await data.loadMission(id);
 const g = new Game(data, createGame(data, lm, { setId: 0, difficulty: Difficulty.NORMAL }));
 g.start();
-const ai = new ComputerPlayer(g);
+const ai = new OriginalAI(g);
 const t0 = Date.now();
 while (!g.state.outcome && g.state.turn < maxTurns) {
   ai.playTurn();

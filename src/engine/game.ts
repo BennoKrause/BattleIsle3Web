@@ -187,7 +187,8 @@ export class Game {
     updateVision(w, u.owner);
     // ambush by hidden neighbours (FUN_004436b5)
     if (!u.container) this.ambush(u);
-    if (u.alive && (u.container || retreating || !this.hasAttackTargets(u))) this.unitDone(u);
+    // after the move the chip window still offers attacking and diving / climbing (manual p. 58)
+    if (u.alive && (u.container || retreating || (!this.hasAttackTargets(u) && !canChangeHeight(this.w, u, true) && !canChangeHeight(this.w, u, false)))) this.unitDone(u);
     updateVisionAll(w);
     this.afterAction();
   }

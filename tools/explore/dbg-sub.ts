@@ -1,0 +1,15 @@
+import { NodeSource } from '../lib/node-source.ts';
+import { loadGameData } from '../../src/data/gamedata.ts';
+import { createGame } from '../../src/engine/setup.ts';
+import { Game } from '../../src/engine/game.ts';
+import { OriginalAI } from '../../src/engine/ai-original.ts';
+const data = await loadGameData(new NodeSource());
+const g = new Game(data, createGame(data, await data.loadMission(110), { setId: 0, difficulty: 1 }));
+g.start();
+const sub = g.state.units.find((u) => u.alive && !u.container && (u.type === 46 || u.type === 47) && u.owner !== 0)!;
+for (let i = 0; i < 12 && g.state.activePlayer !== sub.owner; i++) g.endTurn();
+const ai = new OriginalAI(g) as any;
+ai.begin(); ai.orders.clear();
+console.log('sub', sub.id, sub.owner, sub.x, sub.y, 'layer', sub.layer, 'canMove', g.canMove(sub), 'reach', g.moveArea(sub.id).targets.size, 'rating', ai.ratings.get(sub.id), 'canDive', g.canChangeHeight(sub.id, false));
+for (let i = 0; i < 500 && ai.step(); i++);
+console.log('after', sub.x, sub.y, sub.layer, sub.flags);

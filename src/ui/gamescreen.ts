@@ -7,7 +7,7 @@ import { GameWindow } from './window.ts';
 import { MapRenderer, rgb } from '../render/mapview.ts';
 import type { PlayerChroma } from '../render/chroma.ts';
 import type { CommandResult, Game } from '../engine/game.ts';
-import { ComputerPlayer } from '../engine/ai.ts';
+import { OriginalAI } from '../engine/ai-original.ts';
 import type { GameEvent, UnitState } from '../engine/state.ts';
 import type { CombatResult } from '../engine/combat.ts';
 import { showFightPanel, type FightSide } from './fightpanel.ts';
@@ -780,19 +780,16 @@ export class GameScreen {
     const g = this.game;
     while (!g.state.outcome && !g.isHumanTurn() && !this.destroyed) {
       this.busy = true;
-      const ai = new ComputerPlayer(g);
+      // computer player rebuilt from SDI_1C.EXE: one command per step, every step is shown
+      const ai = new OriginalAI(g);
       const p = g.state.activePlayer;
       this.showTurnBanner(p);
-      ai.planObjectives();
-      ai.produceTurn();
-      for (const u of g.unitsOf(p).sort((x, y) => ai.unitOrder(y) - ai.unitOrder(x))) {
-        if (g.state.outcome || this.destroyed) break;
-        if (!u.alive) continue;
+      ai.begin();
+      for (let n = 0; n < 2000 && !this.destroyed; n++) {
         const start = g.state.eventSeq;
-        ai.actUnit(u);
+        if (!ai.step()) break;
         const evs = g.state.events.filter((ev) => ev.seq >= start);
-        if (evs.length) await this.playEvents(evs);
-        if (evs.length) await sleep(this.aiDelay);
+        if (evs.length) { await this.playEvents(evs); await sleep(this.aiDelay); }
       }
       const res = g.endTurn();
       await this.playEvents(res.events);

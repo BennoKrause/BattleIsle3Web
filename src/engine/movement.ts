@@ -94,16 +94,19 @@ export interface MoveArea {
   /** field index -> predecessor field index (search tree, for the move path). */
   parent: Map<number, number>;
   budget: number;
+  /** All fields reached by the search, including those the unit may not stop on. */
+  reached?: Set<number>;
 }
 
-export function computeMoveArea(w: World, u: UnitState, opts: { retreat?: boolean } = {}): MoveArea {
+/** `fields` replaces the unit's own range (computer player: search area of 64 fields, FUN_0042f260). */
+export function computeMoveArea(w: World, u: UnitState, opts: { retreat?: boolean; fields?: number } = {}): MoveArea {
   const c = w.cls(u);
   const empty: MoveArea = { targets: new Map(), parent: new Map(), budget: 0 };
   if (!u.alive) return empty;
-  let budgetFields = moveBudgetFields(w, u);
+  let budgetFields = opts.fields ?? moveBudgetFields(w, u);
   if (opts.retreat) budgetFields -= u.moved; // second move after an attack (FUN_00443572, unit flag 0x400)
   if (budgetFields < 1) return empty;
-  let points = Math.min(budgetFields << 3, c.moveRange);
+  let points = opts.fields !== undefined ? budgetFields << 3 : Math.min(budgetFields << 3, c.moveRange);
   if (points < STEP) points = STEP;
   const W = w.width;
   const start = w.idx(u.x, u.y);
@@ -206,7 +209,7 @@ export function computeMoveArea(w: World, u: UnitState, opts: { retreat?: boolea
     if (f === start) continue;
     if (canStopOn(w, u, f % W, Math.trunc(f / W))) targets.set(f, steps);
   }
-  return { targets, parent, budget: points };
+  return { targets, parent, budget: points, reached: new Set(reached.keys()) };
 }
 
 /** FUN_0043e185: +6 on the two neighbours of the enemy facing the mover, +16 on the others, enemy field blocked. */

@@ -6,7 +6,7 @@ import type { UnitClassInfo } from '../src/data/gamedata.ts';
 import { ALL_MISSIONS, gameData, hasGameData } from './helpers.ts';
 import { createGame } from '../src/engine/setup.ts';
 import { Game } from '../src/engine/game.ts';
-import { ComputerPlayer } from '../src/engine/ai.ts';
+import { OriginalAI } from '../src/engine/ai-original.ts';
 import { transferUnitsIntoPool, transferUnitsOntoMap, adaptComputerUnits } from '../src/engine/campaign.ts';
 
 describe('hex geometry', () => {
@@ -79,7 +79,7 @@ describe.skipIf(!hasGameData)('missions (headless)', () => {
     const lm = await data.loadMission(id);
     const g = new Game(data, createGame(data, lm, { setId: 0, difficulty: Difficulty.NORMAL }));
     g.start();
-    const ai = new ComputerPlayer(g);
+    const ai = new OriginalAI(g);
     for (let i = 0; i < 12 && !g.state.outcome && g.state.turn < 2; i++) { ai.playTurn(60); g.endTurn(); }
     // consistency: every living unit is either on the map at its own position or in a container
     for (const u of g.state.units) {

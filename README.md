@@ -44,7 +44,8 @@ automatisch gestartet und angespielt. Was ich gegen die EXE abgeglichen habe und
 
 Damit niemand enttäuscht wird:
 
-- **Der Computergegner** ist eine eigene KI. Die Original-KI ist nicht nachgebaut. Sie spielt ordentlich, aber anders.
+- **Der Computergegner** ist aus der EXE nachgebaut (alle 17 Phasen: Ziele, Zuteilung, Kampf, Versorgung,
+  Produktion). Eine Kleinigkeit fehlt noch: die festen Aufträge, die manche Missionen einzelnen Einheiten mitgeben.
 - **Netzwerkspiel** gibt es nicht. Mehrere Spieler an einem Gerät (Hot-Seat) gehen.
 - Ein paar Kleinigkeiten sind noch offen, siehe Audit.
 
