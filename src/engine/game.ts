@@ -2,7 +2,7 @@
 // Reconstructed from SDI_1C.EXE (see docs/research/GAME_RULES.md); parts marked PROVISIONAL are
 // not yet verified against the original program.
 import type { GameData } from '../data/gamedata.ts';
-import { World } from './world.ts';
+import { SF, World, shopFunction } from './world.ts';
 import { RF } from './rules.ts';
 import { UCF } from './classes.ts';
 import { computeMoveArea, pathTo, shopEntrySlot, canLoad, type MoveArea } from './movement.ts';
@@ -95,6 +95,8 @@ export class Game {
     if (u.flags & UnitFlag.DONE) return false;
     // after supplying, repairing or building the vehicle stays where it is (FUN_00424ea0 sets flag 0x200)
     if (u.flags & UnitFlag.ACTION_USED) return false;
+    // a unit that entered a building or was produced this turn stays inside (FUN_00442f96: flags 0x320)
+    if (u.flags & UnitFlag.ENTERED) return false;
     if ((u.flags & UnitFlag.MOVED) && !(u.flags & UnitFlag.ATTACKED)) return false;
     if (u.flags & UnitFlag.ATTACKED) return this.canRetreat(u);
     if (u.container?.kind === 'unit') {
@@ -118,7 +120,7 @@ export class Game {
     if (!u.alive || u.container || u.owner !== this.s.activePlayer || this.s.outcome) return [];
     if (u.flags & (UnitFlag.ATTACKED | UnitFlag.DONE)) return [];
     const c = this.w.cls(u);
-    if ((u.flags & UnitFlag.MOVED) && (c.flags & COOLDOWN)) return []; // PROVISIONAL: artillery cannot attack after moving (manual p. 48)
+    if ((u.flags & UnitFlag.MOVED) && (c.flags & COOLDOWN)) return []; // artillery cannot attack after moving (FUN_00443de3, class flag 0x20000)
     const me = toCombatant(this.w, u);
     const out: AttackTarget[] = [];
     for (const t of this.w.unitsOnMap()) {
@@ -208,19 +210,30 @@ export class Game {
     u.container = null;
   }
 
+  /**
+   * A unit enters a building (game function 0x01, FUN_004425fd). Crystals become material (4 per strength point).
+   * A transporter unloads its whole cargo into the building as far as the 16 places allow; crystals in the cargo become
+   * material as well.
+   */
   private enterShop(u: UnitState, shopId: number) {
     const shop = this.s.shops[shopId];
     const c = this.w.cls(u);
-    if (c.flags & UCF.CRYSTAL) { // PROVISIONAL (manual p. 69): crystals turn into material
+    if (c.flags & UCF.CRYSTAL) {
       shop.material += 4 * u.group;
       this.destroyUnit(u, -1, 'consumed');
       return;
     }
     u.container = { kind: 'shop', id: shopId };
+    u.flags |= UnitFlag.ENTERED;
     shop.units.push(u.id);
     for (const id of [...u.cargo]) {
       const cargo = this.s.units[id];
-      if (this.w.cls(cargo).flags & UCF.CRYSTAL) { shop.material += 4 * cargo.group; this.destroyUnit(cargo, -1, 'consumed'); }
+      if (this.w.cls(cargo).flags & UCF.CRYSTAL) { shop.material += 4 * cargo.group; this.destroyUnit(cargo, -1, 'consumed'); continue; }
+      if (shop.units.length >= 16) continue;
+      cargo.container = { kind: 'shop', id: shopId };
+      cargo.flags |= UnitFlag.ENTERED;
+      shop.units.push(cargo.id);
+      u.cargo = u.cargo.filter((x) => x !== cargo.id);
     }
     u.cargo = u.cargo.filter((id) => this.s.units[id].alive);
   }
@@ -230,7 +243,7 @@ export class Game {
     const prev = shop.owner;
     // capturing a building of an ally ends the alliance on both sides (FUN_004436b5)
     if (prev < NEUTRAL && this.w.isAllied(by.owner, prev) && prev !== by.owner) this.breakAlliance(by.owner, prev);
-    if (prev === NEUTRAL) s.players[by.owner].energy += shop.energy; // PROVISIONAL: energy of neutral buildings is taken over
+    if (prev === NEUTRAL) s.players[by.owner].energy += shop.energy; // energy of a neutral building is taken over (FUN_004436b5)
     shop.owner = by.owner;
     for (const id of shop.units) {
       const cu = s.units[id];
@@ -461,24 +474,31 @@ export class Game {
     updateVisionAll(w);
   }
 
-  /** PROVISIONAL: weather switches terrain sprites via the weather table of PART000.DAT (BattleIsle2020 ApplyWeather). */
+  /**
+   * Weather (FUN_0043a15f). For every terrain type on the map whose weather entry differs between the old and the new
+   * weather, the program loads the complete 46-byte terrain record of the new weather sprite (graphics, type bits,
+   * movement, sight) over it: snow turns water into ice, fields become impassable for some units and so on. Here the
+   * fields simply take the index of that record. A mission is loaded with weather 0 and then switched to its initial
+   * weather (end of the mission loader, SDI_1C.EXE line "if (DAT_004bf95a != 0) FUN_0043a15f"). Afterwards units that can no longer stand on their field sink
+   * (FUN_0044187f).
+   */
   applyWeather(weather: number, initial: boolean) {
-    const s = this.s;
+    const s = this.s, t = this.data.terrain;
     if (weather < 0 || weather > 4) return;
-    const prev = s.weather;
-    for (let i = 0; i < s.terrain.length; i++) {
-      const t = this.data.terrain[s.terrain[i]];
-      if (t && t.weatherSprites[weather] >= 0) s.terrain[i] = t.weatherSprites[weather];
-      const o = s.overlay[i];
-      if (o >= 0) {
-        const od = this.data.terrain[o];
-        if (od && od.weatherSprites[weather] >= 0) s.overlay[i] = od.weatherSprites[weather];
+    const prev = initial ? 0 : s.weather;
+    if (prev !== weather) {
+      const swap = (cur: number) => {
+        const ws = t[cur]?.weatherSprites;
+        return ws && ws[prev] !== ws[weather] && ws[weather] >= 0 ? ws[weather] : cur;
+      };
+      for (let i = 0; i < s.terrain.length; i++) {
+        if (s.terrain[i] >= 0) s.terrain[i] = swap(s.terrain[i]);
+        if (s.overlay[i] >= 0) s.overlay[i] = swap(s.overlay[i]);
       }
     }
     s.weather = weather;
     if (!initial) {
       this.emit('weather', { weather, previous: prev });
-      // thaw: units that can no longer stand on their field sink
       for (const u of this.w.unitsOnMap()) {
         const c = this.w.cls(u);
         if ((c.flags & UCF.PLANE) || (c.flags >>> 31)) continue;
@@ -599,24 +619,29 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ buildings
-  /** Unit types a building can produce now (FUN_00436e51); only factories, airports and harbours produce. */
+  /**
+   * Unit types a building can produce now (FUN_00436e51 with the check 0x2b, FUN_00444c40): only buildings with the
+   * production function, owned by the active player. The list holds every type released for the player by the mission
+   * plus the 4 production entries of the building, each if the player's energy and the building's material suffice.
+   * The original does not filter the list by the kind of factory.
+   */
   producible(shopId: number): number[] {
     const s = this.s, shop = s.shops[shopId];
-    if (!(shop.type & (2 | 4 | 8)) || shop.owner >= NEUTRAL) return [];
+    if (!(shopFunction(shop) & SF.PRODUCTION) || shop.owner >= NEUTRAL) return [];
     const computer = s.players[shop.owner].computer;
     const energy = s.players[shop.owner].energy;
     const out: number[] = [];
     const ok = (t: number) => {
       const c = this.data.unitClasses[t];
-      return c && c.costEnergy <= energy && c.costMaterial <= shop.material && (shop.type & c.shopMask) !== 0;
+      return c && c.costEnergy <= energy && c.costMaterial <= shop.material;
     };
     const flags = s.productionFlags;
     for (let t = 0; t < 64; t++) if ((flags[t] & 1) && (!computer || (flags[t] & 2)) && ok(t)) out.push(t);
-    for (const t of shop.production) if (t > 0 && !out.includes(t) && ok(t)) out.push(t);
+    for (const t of shop.production) if (t > 0 && (!computer || (flags[t] & 2)) && ok(t)) out.push(t);
     return out;
   }
 
-  /** Builds a unit in a building (PROVISIONAL details: academy bonus per manual p. 66). */
+  /** Builds a unit in a building (game function 0x2f, FUN_0042550b). */
   produce(shopId: number, type: number): CommandResult {
     const s = this.s, shop = s.shops[shopId];
     if (shop.owner !== s.activePlayer || !this.producible(shopId).includes(type)) return { ok: false, reason: 'cannot produce', events: [] };
@@ -626,9 +651,10 @@ export class Game {
       s.players[shop.owner].energy -= c.costEnergy;
       shop.material -= c.costMaterial;
       const u = createUnit(s, this.data, type, shop.owner, shop.x, shop.y);
-      u.experience = Math.min(MAX_XP, s.shops.filter((x) => x.owner === shop.owner && (x.type & 64)).length);
+      // one experience point per training camp of the player, at most 4 (FUN_0042550b)
+      u.experience = Math.min(4, s.shops.filter((x) => x.owner === shop.owner && (shopFunction(x) & SF.TRAINING_CAMP)).length);
       u.container = { kind: 'shop', id: shopId };
-      u.flags |= UnitFlag.DONE;
+      u.flags |= UnitFlag.DONE | UnitFlag.ENTERED;
       shop.units.push(u.id);
       s.players[shop.owner].produced++;
       this.emit('message', { type: 'produced', unitId: u.id, shopId }, shop.owner);
@@ -646,6 +672,8 @@ export class Game {
     const s = this.s, u = s.units[unitId];
     if (u.container?.kind !== 'shop' || u.owner !== s.activePlayer) return { ok: false, reason: 'not in a building', events: [] };
     const shop = s.shops[u.container.id];
+    // not in the turn the unit entered (unit flag 0x100) and only with energy in stock (FUN_00445118)
+    if ((u.flags & UnitFlag.ENTERED) || s.players[u.owner].energy <= 0) return { ok: false, reason: 'not possible now', events: [] };
     const { events } = this.collect(() => {
       const used = refillFrom(this.w, u, s.players[u.owner].energy, shop.material);
       if (used) {
@@ -657,11 +685,13 @@ export class Game {
     return { ok: true, events };
   }
 
-  /** Repair in a building: one energy and one material per point of strength (PROVISIONAL), costs one experience point. */
+  /** Repair in a building: one energy and one material per point of strength, costs one experience point (FUN_0044156d). */
   repairInShop(unitId: number): CommandResult {
     const s = this.s, u = s.units[unitId];
     if (u.container?.kind !== 'shop' || u.owner !== s.activePlayer) return { ok: false, reason: 'not in a building', events: [] };
     const shop = s.shops[u.container.id];
+    // not in the turn the unit entered (unit flag 0x100, FUN_00445319)
+    if (u.flags & UnitFlag.ENTERED) return { ok: false, reason: 'entered this turn', events: [] };
     const missing = this.w.maxGroup(this.w.cls(u)) - u.group;
     const n = Math.min(missing, s.players[u.owner].energy, shop.material);
     if (n <= 0) return { ok: false, reason: 'nothing to repair', events: [] };
@@ -771,13 +801,13 @@ export class Game {
 
   /**
    * Campaign training (game functions 0x43-0x45, FUN_00422864 / FUN_00422b54): a unit in a building that is neither a
-   * factory nor a depot gains one experience point per training point of its category (ground, water, air), up to 11.
+   * training camp nor a city gains one experience point per training point of its category (ground, water, air), up to 11.
    */
   canTrain(unitId: number): boolean {
     const s = this.s, u = s.units[unitId];
     if (u.container?.kind !== 'shop' || u.owner !== s.activePlayer || s.outcome) return false;
-    if (s.shops[u.container.id].type & 0x18) return false;
-    if (u.experience >= MAX_XP || (u.flags & UnitFlag.ACTION_USED)) return false;
+    if (shopFunction(s.shops[u.container.id]) & (SF.TRAINING_CAMP | SF.CITY)) return false;
+    if (u.experience >= MAX_XP || (u.flags & UnitFlag.ENTERED)) return false;
     const pts = s.players[u.owner].trainingPoints;
     return !!pts && pts[trainingCategory(this.w.cls(u).flags >>> 0)] > 0;
   }

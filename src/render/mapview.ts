@@ -1,7 +1,7 @@
 // Map window renderer: terrain, overlays, buildings, units, fog of war and selection markers.
 // Hex layout: field (x, y) at (16x, 24y + 12(x&1)) in 24-pixel units; zoom levels 24/36/48
 // ("kleine/mittlere/große Hexfelder", TEXT000.TXT).
-import { buildRoadSet, connectionMask, roadLayers } from './roads.ts';
+import { buildRoadSet, connectionMask, roadLayers, ROAD_KIND } from './roads.ts';
 import type { GameData } from '../data/gamedata.ts';
 import type { GameState } from '../engine/state.ts';
 import { NEUTRAL, Layer, UnitFlag } from '../engine/state.ts';
@@ -172,7 +172,9 @@ export class MapRenderer {
       this.terrainSheet.draw(ctx, terrainSprite(s.terrain[i]), px, py, size);
       const ov = s.overlay[i];
       if (ov >= 0) {
-        const kinds = this.roadSheets.length ? roadLayers(ov) : [];
+        // snow (weather 3/4): roads and paths use the snow-covered pieces of LAYR005/006 (FUN_0043a15f)
+        const snow = s.weather === 3 || s.weather === 4;
+        const kinds = this.roadSheets.length ? roadLayers(ov).map((k) => snow && k === ROAD_KIND.road ? ROAD_KIND.snowRoad : snow && k === ROAD_KIND.path ? ROAD_KIND.snowPath : k) : [];
         if (kinds.length) {
           const nb = w.neighbours(x, y);
           for (const kind of kinds) {

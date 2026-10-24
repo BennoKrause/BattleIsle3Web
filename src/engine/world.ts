@@ -4,6 +4,14 @@ import { NEUTRAL, type GameState, type ShopState, type UnitState } from './state
 import { neighbours, type Pos } from './hex.ts';
 import { UCF } from './classes.ts';
 
+/** Function bits of a building (1 HQ, 2 production, 4 depot, 8 training camp, 16 city); derived from the type for old saves. */
+export function shopFunction(shop: ShopState): number {
+  if (shop.func !== undefined) return shop.func;
+  const t = shop.type;
+  return (t & 1 ? 1 : 0) | (t & 14 ? 2 : 0) | (t & 16 ? 4 : 0) | (t & 64 ? 8 : 0) | (t & 32 ? 16 : 0);
+}
+export const SF = { HQ: 1, PRODUCTION: 2, DEPOT: 4, TRAINING_CAMP: 8, CITY: 16 } as const;
+
 export class World {
   readonly data: GameData;
   readonly state: GameState;

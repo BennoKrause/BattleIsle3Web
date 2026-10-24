@@ -23,7 +23,7 @@ export interface Settings {
   aiSpeed: number;
 }
 
-const DEFAULTS: Settings = { language: 'GER', introSeen: false, attackAllies: false, autoRefuel: true, zoom: 2, videoVolume: 1, music: 2, musicVolume: 0.5, fightMode: '3d', fightVolume: 1, uiMode: 'auto', aiSpeed: 1 };
+const DEFAULTS: Settings = { language: 'GER', introSeen: false, attackAllies: false, autoRefuel: false, zoom: 2, videoVolume: 1, music: 2, musicVolume: 0.5, fightMode: '3d', fightVolume: 1, uiMode: 'auto', aiSpeed: 1 };
 
 export function loadSettings(): Settings {
   try {

@@ -12,9 +12,9 @@ const SINUS = 2, ALGOL = 18, PLANUM = 0, UHU = 31, NAUTILUS = 46, GOLEM = 14;
  * Mission 100 with the given units placed for player 0 on a field and its neighbours (first field: next to the first
  * unit of player 0, or the first field matching `where`); units standing there are removed.
  */
-async function arena(types: number[], where?: (g: Game, x: number, y: number) => boolean) {
+async function arena(types: number[], where?: (g: Game, x: number, y: number) => boolean, mission = 100) {
   const data = await gameData();
-  const state = createGame(data, await data.loadMission(100), { setId: 0, difficulty: 1 });
+  const state = createGame(data, await data.loadMission(mission), { setId: 0, difficulty: 1 });
   const g = new Game(data, state);
   g.start();
   let at = { x: 0, y: 0 };
@@ -137,14 +137,14 @@ describe.skipIf(!hasGameData)('turn start (FUN_0040d4c4)', () => {
 describe.skipIf(!hasGameData)('campaign training points (FUN_004168e6 / FUN_00422b54)', () => {
   it('survivors earn points by experience, spent one point per experience level in a non-factory building', async () => {
     const { earnTrainingPoints } = await import('../src/engine/campaign.ts');
-    const { g, state, units: [golem] } = await arena([GOLEM]);
+    const { g, state, units: [golem] } = await arena([GOLEM], undefined, 104);
     golem.experience = 7; // table: 2 points
     const before = earnTrainingPoints(g.data, state, [0, 0, 0]);
     golem.experience = 0;
     const without = earnTrainingPoints(g.data, state, [0, 0, 0]);
     expect(before[0] - without[0]).toBe(2);
     // put the unit into a building that is no factory / depot
-    const shop = state.shops.find((sh) => sh.kind === 1 && !(sh.type & 0x18) && sh.owner === 0) ?? state.shops.find((sh) => sh.kind === 1 && !(sh.type & 0x18))!;
+    const shop = state.shops.find((sh) => sh.kind === 1 && !((sh.func ?? 0) & 0x18))!;
     shop.owner = 0;
     state.unitAt[golem.y * state.width + golem.x] = -1;
     golem.container = { kind: 'shop', id: shop.id };
@@ -155,5 +155,66 @@ describe.skipIf(!hasGameData)('campaign training points (FUN_004168e6 / FUN_0042
     expect(golem.experience).toBe(2);
     expect(state.players[0].trainingPoints).toEqual([0, 0, 0]);
     expect(g.canTrain(golem.id)).toBe(false);
+  });
+});
+
+describe.skipIf(!hasGameData)('weather (FUN_0043a15f)', () => {
+  it('a mission in weather 0 keeps its terrain; snow loads the snow records (other type bits, other movement)', async () => {
+    const data = await gameData();
+    const lm = await data.loadMission(100);
+    const state = createGame(data, lm, { setId: 0, difficulty: 1 });
+    const g = new Game(data, state);
+    if (state.weather === 0) {
+      g.start();
+      expect(state.terrain).toEqual(Array.from(lm.mission.terrain));
+    } else g.start();
+    const before = [...state.terrain];
+    g.applyWeather(4, false);
+    const changed = state.terrain.filter((t, i) => t !== before[i]).length;
+    expect(changed).toBeGreaterThan(0);
+    const typeChanged = state.terrain.some((t, i) => data.terrain[t].typeMask !== data.terrain[before[i]].typeMask);
+    expect(typeChanged, 'snow changes the terrain types, not only the pictures').toBe(true);
+    // back to sun: the snow records switch back
+    g.applyWeather(0, false);
+    expect(state.terrain.filter((t, i) => t !== before[i]).length).toBeLessThan(changed);
+  });
+});
+
+describe.skipIf(!hasGameData)('buildings (FUN_00445118 / FUN_00445319 / FUN_00442f96 / FUN_0042550b)', () => {
+  it('a unit that entered a building this turn can be neither repaired, refuelled nor moved out; next turn it can', async () => {
+    const { g, state, units: [golem] } = await arena([GOLEM], undefined, 104);
+    const shop = state.shops.find((sh) => sh.kind === 1 && ((sh.func ?? 0) & 2))!;
+    shop.owner = 0;
+    state.players[0].energy = 100; shop.material = 100;
+    // drive into the building
+    state.unitAt[golem.y * state.width + golem.x] = -1;
+    golem.x = shop.x; golem.y = shop.y;
+    (g as any).enterShop(golem, shop.id);
+    golem.group = 2; golem.fuel = 1;
+    expect(g.repairInShop(golem.id).ok).toBe(false);
+    expect(g.refuelInShop(golem.id).ok).toBe(false);
+    expect(g.canMove(golem)).toBe(false);
+    // next turn of player 0
+    const alive = state.players.filter((p) => p.alive).length;
+    for (let i = 0; i < alive; i++) g.endTurn();
+    expect(state.activePlayer).toBe(0);
+    expect(g.repairInShop(golem.id).ok).toBe(true);
+    expect(g.refuelInShop(golem.id).ok).toBe(true);
+    expect(golem.fuel).toBe(g.w.cls(golem).fuel);
+    expect(g.canMove(golem)).toBe(true); // repairing and refuelling do not keep it inside
+  });
+
+  it('only buildings with the production function produce; new units get one experience point per training camp (max 4)', async () => {
+    const { g, state } = await arena([GOLEM], undefined, 104);
+    const depot = state.shops.find((sh) => sh.kind === 1 && !((sh.func ?? 0) & 2));
+    if (depot) { depot.owner = 0; depot.production = [GOLEM, 0, 0, 0]; expect(g.producible(depot.id)).toEqual([]); }
+    const fac = state.shops.find((sh) => sh.kind === 1 && ((sh.func ?? 0) & 2))!;
+    fac.owner = 0; fac.production = [GOLEM, 0, 0, 0]; fac.material = 999; state.players[0].energy = 999; fac.units = [];
+    for (const sh of state.shops) if (sh !== fac) { sh.func = 8; sh.owner = 0; }
+    const res = g.produce(fac.id, GOLEM);
+    expect(res.ok).toBe(true);
+    const u = state.units[fac.units[fac.units.length - 1]];
+    expect(u.experience).toBe(Math.min(4, state.shops.length - 1));
+    expect(g.canMove(u)).toBe(false);
   });
 });

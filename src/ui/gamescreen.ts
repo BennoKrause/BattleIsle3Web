@@ -20,7 +20,7 @@ import type { FileSource } from '../data/source.ts';
 import { environmentFor, type FightAssets } from '../render/fight3d.ts';
 import type { FxPlayer } from '../audio/fx.ts';
 import { NEUTRAL, UnitFlag } from '../engine/state.ts';
-import { World } from '../engine/world.ts';
+import { World, shopFunction } from '../engine/world.ts';
 import { UCF } from '../engine/classes.ts';
 import { Build } from '../engine/support.ts';
 
@@ -937,7 +937,9 @@ export class GameScreen {
       label(dyn, f.render(`Energie ${s.players[shop.owner]?.energy ?? 0}`, '#c4e89c'), 40, 162);
       label(dyn, f.render(`Material ${shop.material}`, '#c4e89c'), 40, 176);
       label(dyn, f.render(`+${shop.energyPlus} / +${shop.materialPlus} je Runde`, '#c0d0c0'), 40, 196);
-      const pic = ['ST01_00', 'ST01_01', 'ST01_02', 'ST01_03', 'ST01_04', 'ST01_05'][Math.max(0, Math.min(5, Math.log2(shop.type & -shop.type)))];
+      // picture by building function (shop window: 1 -> 0, 2 -> 2, 4 -> 1, 8 -> 3, 16 -> 4)
+      const fn = shopFunction(shop);
+      const pic = `ST01_0${fn & 1 ? 0 : fn & 2 ? 2 : fn & 4 ? 1 : fn & 8 ? 3 : fn & 16 ? 4 : 0}`;
       try { label(dyn, (() => { const c = a.canvas('ST000', pic); const cc = document.createElement('canvas'); cc.width = c.width; cc.height = c.height; cc.getContext('2d')!.drawImage(c, 0, 0); return cc; })(), 15, 16); } catch { /* */ }
       shop.units.slice(0, 6).forEach((id, k) => {
         const u = s.units[id];

@@ -107,7 +107,7 @@ export function createGame(data: GameData, lm: LoadedMission, opt: SetupOptions)
     const idx = s.y * m.width + s.x;
     if (s.kind === 1 && s.shopType > 0) {
       const shop = {
-        id: state.shops.length, kind: 1, x: s.x, y: s.y, type: s.shopType, owner: s.owner, nameIndex: s.nameIndex,
+        id: state.shops.length, kind: 1, x: s.x, y: s.y, type: s.shopType, func: s.function & 0xff, owner: s.owner, nameIndex: s.nameIndex,
         energy: s.energy, material: s.material, energyPlus: s.energyPlus, materialPlus: s.materialPlus,
         units: [] as number[], production: s.production.filter((p) => p > 0), aiCommand: s.aiCommand,
       };

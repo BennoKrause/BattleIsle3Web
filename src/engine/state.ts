@@ -17,6 +17,8 @@ export const UnitFlag = {
   DIVED: 64,
   MOVED_FROM_CONTAINER: 128,
   ACTION_USED: 256,
+  /** Entered a building or was produced this turn (SDI_1C.EXE unit flag 0x100): no repair, refuel, training or moving out. */
+  ENTERED: 512,
 } as const;
 
 export type Container = { kind: 'shop'; id: number } | { kind: 'unit'; id: number } | null;
@@ -51,8 +53,12 @@ export interface ShopState {
   kind: number;
   x: number;
   y: number;
-  /** Building type bits: 1 HQ, 2 airport, 4 harbour, 8 factory, 16 depot, 32 city, 64 academy; 0 = transporter cargo. */
+  /** Building type bits: 1 HQ, 2 airport, 4 harbour, 8 factory, 16 depot, 32 city, 64 academy; 0 = transporter cargo.
+   *  Compared with the class shop mask when a unit enters (FUN_00436afa). */
   type: number;
+  /** Building function (mission record +4, SDI_1C.EXE shop byte 0): 1 HQ, 2 production, 4 depot, 8 training camp,
+   *  16 city; missing in old saves (see shopFunction). */
+  func?: number;
   owner: number;
   nameIndex: number;
   energy: number;

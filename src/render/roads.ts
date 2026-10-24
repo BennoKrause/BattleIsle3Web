@@ -5,7 +5,7 @@ import { TILE } from './sprites.ts';
 
 /** LAYR00n: 0 road, 1 path, 2 trench, 3 rail, 4 tyre tracks, 5 snow-covered road, 6 snow-covered path. */
 export const ROAD_LIBS = 7;
-export const ROAD_KIND = { road: 0, path: 1, trench: 2, rail: 3, snowRoad: 5 } as const;
+export const ROAD_KIND = { road: 0, path: 1, trench: 2, rail: 3, snowRoad: 5, snowPath: 6 } as const;
 
 export const SPRITE_ROAD = 90, SPRITE_RAIL = 91, SPRITE_PATH = 92, SPRITE_TRENCH = 93, SPRITE_SNOW_ROAD = 1275;
 
@@ -57,6 +57,7 @@ const COMBOS: Record<number, number[]> = {
   [ROAD_KIND.path]: [1264, 1267, 1268, 1270, 1271, 1273, 1274, SPRITE_PATH],
   [ROAD_KIND.trench]: [1266, 1268, 1269, 1271, 1272, 1273, 1274, SPRITE_TRENCH],
   [ROAD_KIND.snowRoad]: [1264, 1265, 1266, 1270, 1271, 1272, 1274, SPRITE_ROAD, SPRITE_SNOW_ROAD],
+  [ROAD_KIND.snowPath]: [1264, 1267, 1268, 1270, 1271, 1273, 1274, SPRITE_PATH],
 };
 /** Building sprites the roads and rails run into (all kinds except trenches). */
 const BUILDINGS = [54, 55, 76, 71, 80, 81, 44, 45, 66, 63, 69, 86, 87, 88, 393, 395, 563];
