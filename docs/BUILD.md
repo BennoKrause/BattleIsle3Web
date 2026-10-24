@@ -37,3 +37,25 @@ die Daten landen im Volume `./gamedata` und bleiben bei Updates erhalten. Die Im
 - Das Docker-Paket mit dem neuen Node-Server und der Einrichtung wurde noch nicht gebaut und getestet (das frühere nginx-Paket mit
   mitgelieferten Daten war getestet).
 - Nicht geprüft: Start auf einem frischen Windows ohne Visual-C++-Laufzeit.
+
+## Release auf GitHub (`release.ps1`)
+
+```
+.\release.ps1 -Version 0.3.0 -DryRun        # Probelauf: Tests, Pakete bauen und prüfen, Notizen anzeigen – nichts wird veröffentlicht
+.\release.ps1 -Version 0.3.0                # Vorabversion (Pre-Release) mit Notizen aus den Commits seit dem letzten Tag
+.\release.ps1 -Version 0.3.0 -Notes n.md    # eigene Release-Notizen
+.\release.ps1 -Version 0.3.0 -Final         # normales Release
+.\release.ps1 -Version 0.3.0 -SkipTests     # ohne Unit- und Browser-Tests
+```
+
+Ablauf:
+1. Prüft, dass der Arbeitsstand sauber ist, man auf `master` ist, `master` nicht hinter `origin/master` liegt und der Tag
+   noch nicht existiert.
+2. Führt die Unit- und Browser-Tests aus.
+3. Setzt die Version in `package.json`.
+4. Baut beide Pakete und prüft die ZIP-Dateien auf Spieldaten. Werden welche gefunden, bricht das Skript ab.
+5. Committet, setzt den Tag und pusht `master`; `develop` wird per Fast-Forward nachgezogen.
+6. Legt das GitHub-Release an und lädt beide ZIP-Dateien hoch.
+
+Für GitHub nutzt das Skript die GitHub-CLI (`gh`), falls sie installiert ist. Sonst nimmt es die gespeicherten
+Git-Anmeldedaten, mit denen auch gepusht wird.
