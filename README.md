@@ -46,7 +46,7 @@ Damit niemand enttäuscht wird:
 
 - **Der Computergegner** ist eine eigene KI. Die Original-KI ist nicht nachgebaut. Sie spielt ordentlich, aber anders.
 - **Netzwerkspiel** gibt es nicht. Mehrere Spieler an einem Gerät (Hot-Seat) gehen.
-- Das **Wetter** und ein paar Kleinigkeiten sind noch vorläufig, siehe Audit.
+- Ein paar Kleinigkeiten sind noch offen, siehe Audit.
 
 ## Selbst spielen
 
