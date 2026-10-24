@@ -5,6 +5,7 @@
 #   .\release.ps1 -Version 0.3.0 -Final                  als normales Release statt als Vorabversion
 #   .\release.ps1 -Version 0.3.0 -SkipTests              ohne Unit- und Browser-Tests
 #   .\release.ps1 -Version 0.3.0 -DryRun                 alles bauen und prüfen, aber nichts committen, pushen oder hochladen
+#   .\release.ps1 -Version 0.3.0 -PublishOnly            nur das GitHub-Release für einen schon gepushten Tag anlegen
 #
 # Ablauf: sauberer Arbeitsstand auf master → Tests → Version in package.json → Pakete bauen (build-dist, ohne Spieldaten)
 # → ZIPs auf Spieldaten prüfen → Commit, Tag, Push von master, develop nachziehen → GitHub-Release anlegen → ZIPs hochladen.
