@@ -24,3 +24,4 @@ extracted/
 *.mp4
 *.exe
 *.dll
+test-results*/
