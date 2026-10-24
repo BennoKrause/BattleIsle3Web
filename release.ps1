@@ -20,6 +20,7 @@ param(
   [switch]$Final,
   [switch]$SkipTests,
   [switch]$DryRun,
+  [switch]$PublishOnly,
   [string]$Repo = 'BennoKrause/BattleIsle3Web'
 )
 
@@ -48,7 +49,10 @@ if ($branch -ne 'master') { throw "Releases werden von master erstellt (aktuell:
 $dirty = & git status --porcelain
 if ($dirty) { throw "Der Arbeitsstand ist nicht sauber. Bitte zuerst committen:`n$($dirty -join "`n")" }
 Quiet { & git fetch --quiet origin 2>$null }
-if ((& git tag --list $tag)) { throw "Den Tag $tag gibt es schon." }
+if ($PublishOnly) {
+  if (-not (& git tag --list $tag)) { throw "Den Tag $tag gibt es noch nicht; -PublishOnly braucht einen gepushten Tag." }
+  $SkipTests = $true
+} elseif ((& git tag --list $tag)) { throw "Den Tag $tag gibt es schon." }
 $behind = (& git rev-list --count 'HEAD..origin/master').Trim()
 if ($behind -ne '0') { throw "master ist $behind Commit(s) hinter origin/master. Bitte zuerst aktualisieren (git pull)." }
 if ($Notes -and -not (Test-Path -LiteralPath $Notes)) { throw "Notizdatei nicht gefunden: $Notes" }
@@ -110,7 +114,7 @@ FFmpeg ist freie Software (GPL, https://ffmpeg.org). Battle Isle ist eine Marke 
 "@
 }
 
-if ($DryRun) {
+if ($DryRun -and -not $PublishOnly) {
   Step 'Probelauf beendet'
   & git checkout -- package.json
   Write-Host 'Nichts wurde committet, gepusht oder hochgeladen. Release-Notizen:'
@@ -119,6 +123,7 @@ if ($DryRun) {
 }
 
 # ------------------------------------------------------------------ Commit, Tag, Push
+if ($PublishOnly) { & git checkout -- package.json } else {
 Step 'Commit, Tag und Push'
 Run git @('add', 'package.json')
 & git diff --cached --quiet
@@ -136,6 +141,7 @@ try {
 } finally {
   Run git @('checkout', '-q', 'master')
 }
+}
 
 # ------------------------------------------------------------------ GitHub-Release
 Step 'GitHub-Release anlegen'
@@ -150,7 +156,11 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
   $url = "https://github.com/$Repo/releases/tag/$tag"
 } else {
   # Token aus dem Git-Anmeldespeicher (wie beim Push)
-  $cred = Quiet { "protocol=https`nhost=github.com`n`n" | & git credential fill 2>$null }
+  # Windows PowerShell puts a BOM in front of piped input; git then misses the protocol line -> read from a file
+  $credIn = Join-Path $env:TEMP 'bi3-cred-request.txt'
+  [System.IO.File]::WriteAllText($credIn, "protocol=https`nhost=github.com`n`n", (New-Object System.Text.UTF8Encoding $false))
+  $cred = Quiet { cmd /c "git credential fill < `"$credIn`" 2>nul" }
+  Remove-Item -LiteralPath $credIn -Force -ErrorAction SilentlyContinue
   $token = ($cred | Where-Object { $_ -like 'password=*' }) -replace '^password=', ''
   if (-not $token) { throw 'Kein GitHub-Zugang gefunden (weder gh noch gespeicherte git-Anmeldedaten).' }
   $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'bi3-release' }
