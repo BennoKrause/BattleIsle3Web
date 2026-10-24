@@ -103,3 +103,19 @@ test('the setup menu switches between desktop and phone interface and the choice
   await page.waitForSelector('.menu-row', { timeout: 30000 });
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('bi3.settings')!).uiMode)).toBe('desktop');
 });
+
+test('while the computer moves only the statistics window with the progress bar is shown (w_computer.c)', async ({ page }) => {
+  const errors: string[] = [];
+  await openMission(page, 107, errors);
+  await page.click('[data-cmd="Spielerwechsel"]');
+  const win = page.locator('.computerwin');
+  await win.waitFor({ timeout: 30000 });
+  expect(await win.evaluate((e: HTMLElement) => [e.offsetWidth, e.offsetHeight])).toEqual([640, 258]);
+  // one row per player with name and six numbers; no fight window during the computer move
+  expect(await win.locator('canvas.sprite').count()).toBeGreaterThan(20);
+  expect(await page.locator('.fightpanel, .fightwin').count()).toBe(0);
+  // afterwards the window disappears and the human player continues
+  await win.waitFor({ state: 'detached', timeout: 120000 });
+  expect(await page.evaluate(() => (window as any).bi3app.running.game.isHumanTurn())).toBe(true);
+  expect(errors).toEqual([]);
+});

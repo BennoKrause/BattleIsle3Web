@@ -8,6 +8,7 @@ import { MapRenderer, rgb } from '../render/mapview.ts';
 import type { PlayerChroma } from '../render/chroma.ts';
 import type { CommandResult, Game } from '../engine/game.ts';
 import { OriginalAI } from '../engine/ai-original.ts';
+import { ComputerWindow } from './computerwindow.ts';
 import type { GameEvent, UnitState } from '../engine/state.ts';
 import type { CombatResult } from '../engine/combat.ts';
 import { showFightPanel, type FightSide } from './fightpanel.ts';
@@ -264,6 +265,7 @@ export class GameScreen {
   private loop = () => {
     if (this.destroyed) return;
     this.raf = requestAnimationFrame(this.loop);
+    if (this.frozen) return;
     const now = performance.now();
     const s = this.game.state;
     const hl = {
@@ -780,21 +782,38 @@ export class GameScreen {
     const g = this.game;
     while (!g.state.outcome && !g.isHumanTurn() && !this.destroyed) {
       this.busy = true;
-      // computer player rebuilt from SDI_1C.EXE: one command per step, every step is shown
+      // computer move like the original (w_computer.c): the map stands still, no moves or fights are shown; only the
+      // statistics window with the progress bar is updated after every command
       const ai = new OriginalAI(g);
       const p = g.state.activePlayer;
-      this.showTurnBanner(p);
+      this.frozen = true;
+      this.closeChip();
+      const win = this.computerWindow ??= new ComputerWindow({
+        layer: this.ctx.desktop.layer, assets: this.ctx.assets, fonts: this.ctx.fonts, chroma: this.ctx.chroma,
+        playerNames: this.ctx.playerNames, viewer: this.viewer, mobile: !!this.mobile, onQuit: () => this.hooks.quit(),
+      });
+      win.setProgress(0, 0);
+      win.update(g.state, p);
       ai.begin();
+      let last = performance.now();
       for (let n = 0; n < 2000 && !this.destroyed; n++) {
         const start = g.state.eventSeq;
         if (!ai.step()) break;
-        const evs = g.state.events.filter((ev) => ev.seq >= start);
-        if (evs.length) { await this.playEvents(evs); await sleep(this.aiDelay); }
+        const pr = ai.progress;
+        if (pr) win.setProgress(pr.cur, pr.total);
+        await this.playComputerEvents(g.state.events.filter((ev) => ev.seq >= start));
+        // keep the page responsive and the window alive
+        if (performance.now() - last > 40) { win.update(g.state, p); await sleep(Math.min(this.aiDelay, 30)); last = performance.now(); }
       }
+      win.setProgress(0, 0);
+      win.update(g.state, p);
       const res = g.endTurn();
-      await this.playEvents(res.events);
-      this.hideTurnBanner();
+      await this.playComputerEvents(res.events);
     }
+    this.computerWindow?.close();
+    this.computerWindow = null;
+    this.frozen = false;
+    this.dirty = true;
     if (!g.state.outcome) {
       // hot-seat: show the active human player's view
       this.viewer = g.state.activePlayer;
@@ -804,15 +823,22 @@ export class GameScreen {
     if (g.state.outcome) this.hooks.onOutcome();
   }
 
-  private banner: HTMLDivElement | null = null;
-  private showTurnBanner(p: number) {
-    this.hideTurnBanner();
-    if (this.mobile) { this.mobile.toast(`${this.ctx.playerNames[p] || `Spieler ${p + 1}`} ist am Zug – Runde ${this.game.state.turn + 1}`, 1800); return; }
-    this.banner = el('div', 'gwin turnbanner', this.ctx.desktop.layer, { left: `${(DESKTOP_W - 300) / 2}px`, top: '10px', width: '300px', height: '24px' });
-    this.banner.style.zIndex = '4950';
-    label(this.banner, this.ctx.fonts.small.render(`${this.ctx.playerNames[p] || `Spieler ${p + 1}`} ist am Zug – Runde ${this.game.state.turn + 1}`, '#f0e060'), 10, 6);
+  private computerWindow: ComputerWindow | null = null;
+  /** No map redraw while a computer player moves. */
+  private frozen = false;
+
+  /** Events during a computer move: only videos and messages for the watching player; moves and fights are not shown. */
+  private async playComputerEvents(events: GameEvent[]) {
+    for (const e of events) {
+      this.eventCursor = Math.max(this.eventCursor, e.seq + 1);
+      if (e.kind === 'video' || e.kind === 'victory' || e.kind === 'defeat' || (e.kind === 'message' && e.data.type === 'text')) {
+        this.frozen = false;
+        await this.playEvents([e]);
+        this.frozen = true;
+      }
+    }
   }
-  private hideTurnBanner() { this.banner?.remove(); this.banner = null; }
+
 
   // ------------------------------------------------------------------ info windows
   private updateInfo() {

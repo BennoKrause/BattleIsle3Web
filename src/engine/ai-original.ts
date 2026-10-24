@@ -415,6 +415,11 @@ export class OriginalAI {
   }
 
   // ------------------------------------------------------------------ phases 6-16 (acting)
+  /** Progress of the combat phases 7-9 for the computer window (FUN_0042eeec: unit n of the list); null otherwise. */
+  get progress(): { cur: number; total: number } | null {
+    return this.phase >= 7 && this.phase <= 9 && this.list ? { cur: this.cursor, total: this.list.length } : null;
+  }
+
   /** Performs the next command of the turn; false when the turn is over. */
   step(): boolean {
     while (this.phase <= 16) {

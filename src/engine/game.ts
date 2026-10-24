@@ -246,6 +246,7 @@ export class Game {
     if (prev < NEUTRAL && this.w.isAllied(by.owner, prev) && prev !== by.owner) this.breakAlliance(by.owner, prev);
     if (prev === NEUTRAL) s.players[by.owner].energy += shop.energy; // energy of a neutral building is taken over (FUN_004436b5)
     shop.owner = by.owner;
+    s.players[by.owner].shopsTaken = (s.players[by.owner].shopsTaken ?? 0) + 1;
     for (const id of shop.units) {
       const cu = s.units[id];
       if (cu.owner !== by.owner) {

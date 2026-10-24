@@ -89,6 +89,8 @@ export interface PlayerState {
   lost: number;
   produced: number;
   captured: number;
+  /** Buildings taken (statistics of the computer window, 0x4b8f60); missing in old saves. */
+  shopsTaken?: number;
   /** Campaign training points [ground, water, air]; only in campaign games. */
   trainingPoints?: number[];
 }
