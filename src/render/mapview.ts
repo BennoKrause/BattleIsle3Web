@@ -81,6 +81,16 @@ export class MapRenderer {
     return b;
   }
 
+  // ------------------------------------------------------------------ explosions (SDI_1C.EXE FUN_00413b91 / map loop)
+  private explosionFrames: HTMLCanvasElement[] = [];
+  private explosions: { field: number; start: number }[] = [];
+  /** LIB/EXPLO000 EX00_00..07: the eight pictures of a unit being destroyed. */
+  setExplosionFrames(frames: HTMLCanvasElement[]) { this.explosionFrames = frames; }
+  /** One picture every 6 ticks of 17 ms (redrawn when more than 5 ticks have passed), then 5 steps until the end. */
+  static readonly EXPLOSION_STEP = 102;
+  addExplosion(field: number, now = performance.now()) { this.explosions.push({ field, start: now }); }
+  get exploding() { return this.explosions.length > 0; }
+
   get tileSize() { return TILE * this.zoom; }
 
   resize(w: number, h: number) {
@@ -249,6 +259,16 @@ export class MapRenderer {
       if (hl.action && !hl.action.has(i)) tint('rgba(200,30,20,0.45)');
     }
     blit(tints);
+    // explosions of destroyed units over the field
+    const step = MapRenderer.EXPLOSION_STEP;
+    this.explosions = this.explosions.filter((e) => time - e.start < 13 * step);
+    for (const e of this.explosions) {
+      const frame = Math.floor((time - e.start) / step);
+      const pic = this.explosionFrames[frame];
+      if (!pic) continue;
+      const p = this.fieldPixel(e.field % s.width, Math.floor(e.field / s.width));
+      ctx.drawImage(pic, p.x - this.scrollX, p.y - this.scrollY, size, size);
+    }
     if (hl.moving) {
       const u = s.units[hl.moving.unitId];
       const scheme = chroma[Math.min(u.owner, 6)]?.scheme ?? 12;

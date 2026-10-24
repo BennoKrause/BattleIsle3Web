@@ -141,6 +141,9 @@ test('ending the turn from the dock hands over to the computer and back', async 
   const errors: string[] = [];
   await startMission(page, 100, errors);
   await page.locator('.m-end').tap();
+  // the computer moves behind the statistics window; then "Nächster Spieler" has to be confirmed
+  await page.locator('.computerwin').waitFor({ timeout: 30000 });
+  await page.locator('.msgbox .m-cmd').click({ timeout: 120000 });
   await expect(page.locator('.m-round')).toContainText('Runde 2', { timeout: 60000 });
   expect(errors).toEqual([]);
 });

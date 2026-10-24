@@ -9,7 +9,8 @@ import type { PlayerChroma } from '../render/chroma.ts';
 import type { CommandResult, Game } from '../engine/game.ts';
 import { OriginalAI } from '../engine/ai-original.ts';
 import { ComputerWindow } from './computerwindow.ts';
-import type { GameEvent, UnitState } from '../engine/state.ts';
+import type { GameEvent, GameState, UnitState } from '../engine/state.ts';
+import { parseLib } from '../formats/lib.ts';
 import type { CombatResult } from '../engine/combat.ts';
 import { showFightPanel, type FightSide } from './fightpanel.ts';
 import { showFightWindow } from './fightwindow.ts';
@@ -102,6 +103,9 @@ export class GameScreen {
     this.eventCursor = game.state.eventSeq;
     if (desktop.mobile) this.buildMobile();
     else this.buildDesktop();
+    try {
+      ctx.renderer.setExplosionFrames(Array.from({ length: 8 }, (_, i) => ctx.assets.canvas('EXPLO000', `EX00_0${i}`)));
+    } catch { /* without the library no explosion pictures */ }
     window.addEventListener('keydown', this.onKey);
     // initial view: centre on the human player's HQ or first unit
     this.viewer = game.isHumanTurn() ? game.state.activePlayer : this.firstHuman();
@@ -265,9 +269,11 @@ export class GameScreen {
   private loop = () => {
     if (this.destroyed) return;
     this.raf = requestAnimationFrame(this.loop);
-    if (this.frozen) return;
+    // during a computer move the map shows the state from before the move; only explosions change it
+    if (this.frozen && !this.ctx.renderer.exploding && !this.frozenDirty) return;
+    this.frozenDirty = false;
     const now = performance.now();
-    const s = this.game.state;
+    const s = this.frozen && this.frozenState ? this.frozenState : this.game.state;
     const hl = {
       move: this.mode.kind === 'move' ? this.mode.area : undefined,
       attack: this.mode.kind === 'attack' ? new Set([...this.mode.targets.keys()].map((id) => this.game.w.idx(s.units[id].x, s.units[id].y))) : undefined,
@@ -652,6 +658,7 @@ export class GameScreen {
         case 'message':
           if (e.data.type === 'move') await this.animateMove(e.data.unitId as number, e.data.path as number[]);
           break;
+        case 'unit-destroyed': this.explode(e); break;
         case 'surprise':
           if (e.player === this.viewer) this.flash('Hinterhalt im Nebel!');
           break;
@@ -780,13 +787,14 @@ export class GameScreen {
   /** Plays the turns of computer players until a human player is to move or the game ends. */
   async runComputerTurns() {
     const g = this.game;
+    let computerMoved = false;
     while (!g.state.outcome && !g.isHumanTurn() && !this.destroyed) {
       this.busy = true;
       // computer move like the original (w_computer.c): the map stands still, no moves or fights are shown; only the
       // statistics window with the progress bar is updated after every command
       const ai = new OriginalAI(g);
       const p = g.state.activePlayer;
-      this.frozen = true;
+      if (!this.frozen) this.freeze();
       this.closeChip();
       const win = this.computerWindow ??= new ComputerWindow({
         layer: this.ctx.desktop.layer, assets: this.ctx.assets, fonts: this.ctx.fonts, chroma: this.ctx.chroma,
@@ -795,24 +803,34 @@ export class GameScreen {
       win.setProgress(0, 0);
       win.update(g.state, p);
       ai.begin();
-      let last = performance.now();
+      // pace of the original: every command passes three frames of 17 ms (FUN_00466808 + FUN_00403600 ×2)
+      const stepMs = Math.round((this.aiDelay * 51) / 120);
       for (let n = 0; n < 2000 && !this.destroyed; n++) {
         const start = g.state.eventSeq;
         if (!ai.step()) break;
         const pr = ai.progress;
         if (pr) win.setProgress(pr.cur, pr.total);
         await this.playComputerEvents(g.state.events.filter((ev) => ev.seq >= start));
-        // keep the page responsive and the window alive
-        if (performance.now() - last > 40) { win.update(g.state, p); await sleep(Math.min(this.aiDelay, 30)); last = performance.now(); }
+        win.update(g.state, p);
+        await sleep(stepMs);
       }
       win.setProgress(0, 0);
       win.update(g.state, p);
+      // "Computermode ceased": 100 frames before the next player (FUN_00407901)
+      await sleep(Math.round((this.aiDelay * 1700) / 120));
       const res = g.endTurn();
       await this.playComputerEvents(res.events);
+      computerMoved = true;
+    }
+    if (computerMoved && !g.state.outcome && !this.destroyed) {
+      // the next player is a human: "Nächster Spieler: <name>" over the statistics window, then the window closes
+      const name = this.ctx.playerNames[g.state.activePlayer] || `Spieler ${g.state.activePlayer + 1}`;
+      await this.hooks.showText('', `${(g.data.uiTexts[26] ?? 'Nächster Spieler:|').replace('|', '\n')}${name}`);
     }
     this.computerWindow?.close();
     this.computerWindow = null;
     this.frozen = false;
+    this.frozenState = null;
     this.dirty = true;
     if (!g.state.outcome) {
       // hot-seat: show the active human player's view
@@ -827,15 +845,60 @@ export class GameScreen {
   /** No map redraw while a computer player moves. */
   private frozen = false;
 
-  /** Events during a computer move: only videos and messages for the watching player; moves and fights are not shown. */
+  /** Copy of the state shown on the map during a computer move. */
+  private frozenState: GameState | null = null;
+  private frozenDirty = false;
+
+  private freeze() {
+    const { events: _events, ...rest } = this.game.state;
+    void _events;
+    this.frozenState = { ...structuredClone(rest), events: [] } as GameState;
+    this.frozen = true;
+    this.frozenDirty = true;
+  }
+
+  /** Events during a computer move: videos and messages for the watching player and explosions on visible fields;
+   *  moves and fights are not shown. */
   private async playComputerEvents(events: GameEvent[]) {
     for (const e of events) {
       this.eventCursor = Math.max(this.eventCursor, e.seq + 1);
-      if (e.kind === 'video' || e.kind === 'victory' || e.kind === 'defeat' || (e.kind === 'message' && e.data.type === 'text')) {
+      if (e.kind === 'unit-destroyed') this.explode(e);
+      else if (e.kind === 'video' || e.kind === 'victory' || e.kind === 'defeat' || (e.kind === 'message' && e.data.type === 'text')) {
+        const keep = this.frozenState;
         this.frozen = false;
         await this.playEvents([e]);
         this.frozen = true;
+        this.frozenState = keep;
+        this.frozenDirty = true;
       }
+    }
+  }
+
+  private explosionSound: Promise<Uint8Array | null> | null = null;
+  /**
+   * A destroyed unit on a field the viewer watches explodes (FUN_0042ab2b → FUN_00413b91): eight pictures of
+   * LIB/EXPLO000 and sample 8 of FGT/FGTEXPLO.LIB (FX_PlaySample(0, 8, ...)). During a computer move the unit then
+   * disappears from the frozen map.
+   */
+  private explode(e: GameEvent) {
+    const s = this.frozen && this.frozenState ? this.frozenState : this.game.state;
+    const x = e.data.x as number, y = e.data.y as number, id = e.data.unitId as number;
+    if (x === undefined || y === undefined) return;
+    const field = y * s.width + x;
+    if (!(s.vision[field] & (1 << this.viewer))) return;
+    if (this.frozen && this.frozenState && this.frozenState.units[id]?.container) return;
+    this.ctx.renderer.addExplosion(field);
+    this.explosionSound ??= this.ctx.src.read('FGT/FGTEXPLO.LIB').then((b) => parseLib(b)[8]?.data ?? null).catch(() => null);
+    void this.explosionSound.then((w) => this.ctx.fight?.fx.play(w));
+    if (this.frozen && this.frozenState) {
+      const fs = this.frozenState;
+      setTimeout(() => {
+        if (fs !== this.frozenState) return;
+        const u = fs.units[id];
+        if (u) u.alive = false;
+        if (fs.unitAt[field] === id) fs.unitAt[field] = -1;
+        this.frozenDirty = true;
+      }, 8 * MapRenderer.EXPLOSION_STEP);
     }
   }
 

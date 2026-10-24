@@ -27,7 +27,7 @@ import { parseMidi, type MidiSong } from '../audio/midi.ts';
 import { DEFAULT_CHROMA, parseChroma } from '../render/chroma.ts';
 import { autosave, listSaves, loadSettings, rememberSequence, saveSettings, seenSequences, writeSave, type SaveGame, type Settings } from './storage.ts';
 
-const UI_LIBS = ['BKGD000', 'CSTA000', 'MNGR000', 'FRMS000', 'CMSK000', 'CMFRM000', 'SETUP000', 'SI000', 'SP000', 'ST000', 'WW000', 'UW000', 'CA000', 'MA000', 'CURS000', 'FF000', 'UI000', 'UI001', 'WB000'];
+const UI_LIBS = ['BKGD000', 'CSTA000', 'EXPLO000', 'MNGR000', 'FRMS000', 'CMSK000', 'CMFRM000', 'SETUP000', 'SI000', 'SP000', 'ST000', 'WW000', 'UW000', 'CA000', 'MA000', 'CURS000', 'FF000', 'UI000', 'UI001', 'WB000'];
 const INTRO = [980, 981, 982];
 const CREDITS = 997;
 

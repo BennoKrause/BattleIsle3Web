@@ -105,6 +105,7 @@ test('the setup menu switches between desktop and phone interface and the choice
 });
 
 test('while the computer moves only the statistics window with the progress bar is shown (w_computer.c)', async ({ page }) => {
+  test.setTimeout(300_000);
   const errors: string[] = [];
   await openMission(page, 107, errors);
   await page.click('[data-cmd="Spielerwechsel"]');
@@ -114,8 +115,11 @@ test('while the computer moves only the statistics window with the progress bar 
   // one row per player with name and six numbers; no fight window during the computer move
   expect(await win.locator('canvas.sprite').count()).toBeGreaterThan(20);
   expect(await page.locator('.fightpanel, .fightwin').count()).toBe(0);
-  // afterwards the window disappears and the human player continues
-  await win.waitFor({ state: 'detached', timeout: 120000 });
+  // afterwards "Nächster Spieler" is shown over the window; only after confirming it the human player continues
+  await page.locator('.msgbox').waitFor({ timeout: 240000 });
+  expect(await win.count()).toBe(1);
+  await page.locator('.msgbox').click();
+  await win.waitFor({ state: 'detached', timeout: 10000 });
   expect(await page.evaluate(() => (window as any).bi3app.running.game.isHumanTurn())).toBe(true);
   expect(errors).toEqual([]);
 });
