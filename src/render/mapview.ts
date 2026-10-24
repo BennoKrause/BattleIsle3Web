@@ -30,6 +30,9 @@ export class MapRenderer {
   private ctx: CanvasRenderingContext2D;
   private terrainSheet: SpriteSheet;
   private unitRaw: Uint8Array[];
+  private terrainRaw: Uint8Array[];
+  /** Terrain sheets recoloured for a player colour scheme (building overlays carry the player colour in indices 1..7). */
+  private buildingSheets = new Map<number, SpriteSheet>();
   private unitSheets = new Map<number, SpriteSheet>();
   private palette: Uint8Array;
   private hexMask: HTMLCanvasElement;
@@ -46,6 +49,7 @@ export class MapRenderer {
     this.ctx = this.canvas.getContext('2d')!;
     this.terrainSheet = new SpriteSheet(terrainSprites, palette, 0);
     this.unitRaw = unitSprites;
+    this.terrainRaw = terrainSprites;
     // hex shape from a full ground tile
     this.hexMask = document.createElement('canvas');
     this.hexMask.width = this.hexMask.height = TILE;
@@ -126,6 +130,15 @@ export class MapRenderer {
     return -1;
   }
 
+  private buildingSheet(scheme: number): SpriteSheet {
+    let sh = this.buildingSheets.get(scheme);
+    if (!sh) {
+      sh = new SpriteSheet(this.terrainRaw, this.palette, 0, remapForScheme(scheme));
+      this.buildingSheets.set(scheme, sh);
+    }
+    return sh;
+  }
+
   private unitSheet(scheme: number): SpriteSheet {
     let sh = this.unitSheets.get(scheme);
     if (!sh) {
@@ -201,6 +214,10 @@ export class MapRenderer {
             const mask = connectionMask(kind, nb, (nx, ny) => s.overlay[ny * s.width + nx], (nx, ny) => s.shopAt[ny * s.width + nx] >= 0);
             this.roadSheets[kind]?.draw(terrain, mask, px, py);
           }
+        } else if (s.shopAt[i] >= 0) {
+          // buildings are drawn in the colours of their owner, like the units (neutral: slot 6)
+          const owner = s.shops[s.shopAt[i]].owner;
+          this.buildingSheet(chroma[Math.min(owner, 6)]?.scheme ?? 12).draw(terrain, terrainSprite(ov), px, py);
         } else this.terrainSheet.draw(terrain, terrainSprite(ov), px, py);
       }
     }
@@ -213,14 +230,6 @@ export class MapRenderer {
       if (!(s.explored[i] & bit)) continue;
       const p = this.fieldPixel(x, y);
       const px = p.x - this.scrollX, py = p.y - this.scrollY;
-      const shopId = s.shopAt[i];
-      if (shopId >= 0) {
-        const shop = s.shops[shopId];
-        const col = chroma[Math.min(shop.owner, 6)]?.color ?? 0;
-        ctx.fillStyle = rgb(this.palette, col);
-        const d = Math.max(3, size / 6);
-        ctx.fillRect(px + size / 2 - d / 2, py + size / 2 - d / 2, d, d);
-      }
       const uid = s.unitAt[i];
       if (uid >= 0 && !hl.hidden?.has(uid) && unitVisibleTo(w, viewer, uid)) {
         const u = s.units[uid];
