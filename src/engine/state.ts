@@ -75,6 +75,8 @@ export interface PlayerState {
   lost: number;
   produced: number;
   captured: number;
+  /** Campaign training points [ground, water, air]; only in campaign games. */
+  trainingPoints?: number[];
 }
 
 export interface QueuedAction {
@@ -147,6 +149,8 @@ export interface GameState {
   rngState: number;
   events: GameEvent[];
   eventSeq: number;
+  /** Overlay kinds that may be built (0x10 | type bits 1 road, 2 path, 4 trench, 8 rail present at the start); missing in old saves. */
+  buildMask?: number;
   /** Video sequence ids already shown (videorecorder menu). */
   seenSequences: number[];
 }

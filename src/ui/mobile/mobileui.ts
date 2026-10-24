@@ -39,6 +39,7 @@ export interface ShopView {
   producible: { type: number; name: string; energy: number; material: number }[];
   producing: boolean;
   canMoveSelected: boolean;
+  canTrainSelected?: boolean;
   hasSelected: boolean;
 }
 
@@ -47,6 +48,7 @@ export interface ShopActions {
   move(): void;
   refuel(): void;
   repair(): void;
+  train(): void;
   toggleProduce(): void;
   produce(type: number): void;
 }
@@ -70,7 +72,7 @@ const PROP_NAMES: Record<string, string> = {
   UW01_54: 'Ziehen, Angreifen, Ziehen', UW01_55: 'Wechselt die Höhenstufe', UW01_56: 'Repariert und betankt',
 };
 /** Original command icons (chip window, CMSK000) for the unit card. */
-const ACTION_ICONS: Record<string, string> = { move: 'C01_03', attack: 'C01_04', cargo: 'C01_17', info: 'C01_11', done: 'C01_02' };
+const ACTION_ICONS: Record<string, string> = { move: 'C01_03', attack: 'C01_04', cargo: 'C01_17', info: 'C01_11', done: 'C01_02', refill: 'C01_15', repair: 'C01_13', build: 'C01_14', up: 'C01_09', down: 'C01_10', train: 'C01_16', 'build-0': 'C01_20', 'build-1': 'C01_21', 'build-2': 'C01_22', 'build-3': 'C01_23' };
 
 export class MobileUi {
   readonly root: HTMLElement;
@@ -391,6 +393,7 @@ export class MobileUi {
         btn('Bewegen', 'move', v.canMoveSelected, () => { this.closeSheet(); act.move(); });
         btn('Tanken', 'refuel', v.hasSelected, () => act.refuel());
         btn('Reparieren', 'repair', v.hasSelected, () => act.repair());
+        if (v.canTrainSelected) btn('Training', 'train', true, () => act.train());
         btn(v.producing ? 'Schließen' : 'Produzieren', 'produce', v.producible.length > 0, () => act.toggleProduce());
         if (v.producing) {
           this.text(el('h3', 'm-section', body), 'Produzieren', { color: COLORS.accent, scale: 1.5 });

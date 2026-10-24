@@ -20,10 +20,33 @@ export interface CampaignProgress {
   seenSequences: number[];
   completed: number[];
   finished: boolean;
+  /** Training points of the campaign player [ground, water, air] (FUN_004168e6), spent in buildings; missing in old saves. */
+  trainingPoints?: number[];
 }
 
 export function newCampaign(setId: number, difficulty: number): CampaignProgress {
   return { version: 1, setId, difficulty, missionIndex: 0, pool: [], seenSequences: [], completed: [], finished: false };
+}
+
+/** Training points per experience level of a surviving unit (table 0x4c8ba8). */
+const POINTS_PER_XP = [0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3];
+
+/** Category of a unit class for training points: 0 ground, 1 water (ships), 2 air (FUN_004168e6). */
+export function trainingCategory(flags: number) { return (flags >>> 31) ? 1 : (flags & 0x800000) ? 2 : 0; }
+
+/**
+ * At the end of a won campaign mission every surviving unit of the player earns training points by its experience
+ * (FUN_004168e6, called from the next-mission dialog FUN_00416a8e); support units and crystals (class bits 29/30) do not.
+ */
+export function earnTrainingPoints(data: GameData, state: GameState, points: number[] = [0, 0, 0]): number[] {
+  const out = [...points];
+  for (const u of state.units) {
+    if (!u.alive || u.owner !== CAMPAIGN_PLAYER) continue;
+    const f = data.unitClasses[u.type].flags >>> 0;
+    if (f & 0x60000000) continue;
+    out[trainingCategory(f)] += POINTS_PER_XP[u.experience] ?? 0;
+  }
+  return out;
 }
 
 /** Player 0 (owner mask 1) is the campaign player. */

@@ -12,10 +12,14 @@ import { toCombatant } from './combatant.ts';
 import { distance, directionTo } from './hex.ts';
 import { nextRandom } from './rng.ts';
 import { createUnit } from './setup.ts';
+import { trainingCategory } from './campaign.ts';
+import { buildOn, buildTargets, canChangeHeight, canRefill, canRepair, changeHeight, initialBuildMask, refillByUnit, refillFrom, refillNeed, repairByUnit, repairFrom, repairNeed } from './support.ts';
 import { ActionType } from '../formats/actions.ts';
 import { Layer, MAX_EXPERIENCE, NEUTRAL, UnitFlag, type GameEvent, type GameState, type QueuedAction, type UnitState } from './state.ts';
 
 export const MAX_XP = MAX_EXPERIENCE - 1; // experience 0..11 (FUN_004408ca)
+/** Upper limit of energy and material (0x7ef4, FUN_004370af). */
+const ENERGY_CAP = 32500;
 
 export interface AttackTarget { unitId: number; weapons: number }
 
@@ -89,6 +93,8 @@ export class Game {
   canMove(u: UnitState): boolean {
     if (!u.alive || u.owner !== this.s.activePlayer || this.s.outcome) return false;
     if (u.flags & UnitFlag.DONE) return false;
+    // after supplying, repairing or building the vehicle stays where it is (FUN_00424ea0 sets flag 0x200)
+    if (u.flags & UnitFlag.ACTION_USED) return false;
     if ((u.flags & UnitFlag.MOVED) && !(u.flags & UnitFlag.ATTACKED)) return false;
     if (u.flags & UnitFlag.ATTACKED) return this.canRetreat(u);
     if (u.container?.kind === 'unit') {
@@ -552,23 +558,42 @@ export class Game {
     return { ok: true, events };
   }
 
-  /** FUN_0040d4c4: resets units, aircraft lose fuel, income, automatic supply in buildings. */
+  /**
+   * FUN_0040d4c4 at every change of the active player: all aircraft on the map (of every player) lose one point of
+   * fuel and crash without fuel; then the income of the new player (FUN_004370af / FUN_00437284, capped at 32500).
+   */
   private startPlayerTurn(p: number) {
     const s = this.s, w = this.w;
     for (const u of s.units) {
-      if (!u.alive || u.owner !== p) continue;
-      u.flags &= UnitFlag.ASCENDED | UnitFlag.DIVED;
-      u.moved = 0;
+      if (!u.alive) continue;
+      if (u.owner === p) {
+        u.flags &= UnitFlag.ASCENDED | UnitFlag.DIVED;
+        u.moved = 0;
+      }
       if (!u.container && (w.cls(u).flags & UCF.PLANE)) {
-        if (!(s.ruleFlags & RF.NO_FUEL_USE)) u.fuel = Math.max(0, u.fuel - 1);
+        u.fuel = Math.max(0, u.fuel - 1);
         if (u.fuel <= 0) { this.destroyUnit(u, -1, 'crashed'); this.emit('crashed', { unitId: u.id }); }
       }
     }
-    // PROVISIONAL income: energy (global) and material (per building)
     for (const shop of s.shops) {
       if (shop.owner !== p) continue;
-      s.players[p].energy += shop.energyPlus;
-      shop.material += shop.materialPlus;
+      s.players[p].energy = Math.min(ENERGY_CAP, s.players[p].energy + shop.energyPlus);
+      shop.material = Math.min(ENERGY_CAP, shop.material + shop.materialPlus);
+    }
+    // setup option "Units autom. betanken": units in buildings are repaired and refilled (rule flags 0x80 / 0x100)
+    if (s.ruleFlags & (RF.AUTO_REPAIR | RF.AUTO_REFUEL)) {
+      for (const u of s.units) {
+        if (!u.alive || u.owner !== p || u.container?.kind !== 'shop') continue;
+        const shop = s.shops[u.container.id], pl = s.players[p];
+        if (s.ruleFlags & RF.AUTO_REPAIR) {
+          const n = repairFrom(w, u, pl.energy, shop.material);
+          pl.energy -= n; shop.material -= n;
+        }
+        if (s.ruleFlags & RF.AUTO_REFUEL) {
+          const used = refillFrom(w, u, pl.energy, shop.material);
+          if (used) { pl.energy = Math.max(0, pl.energy - used[0]); shop.material = Math.max(0, shop.material - used[1]); }
+        }
+      }
     }
     updateVision(w, p);
   }
@@ -612,30 +637,21 @@ export class Game {
     return { ok: true, events };
   }
 
-  /** Refuel / rearm a unit inside a building: 100 fuel = 1 energy, 100 ammo = 1 material, at least 1 each (FUN_00440d99). */
+  /**
+   * Refuel / rearm a unit inside a building (game function 0x39 with a building, FUN_00440d99): 100 fuel = 1 energy of
+   * the player, 100 ammunition = 1 material of the building, at least 1 each. Unlike repairing it costs no experience
+   * (the manual says so, the program does not do it).
+   */
   refuelInShop(unitId: number): CommandResult {
     const s = this.s, u = s.units[unitId];
     if (u.container?.kind !== 'shop' || u.owner !== s.activePlayer) return { ok: false, reason: 'not in a building', events: [] };
     const shop = s.shops[u.container.id];
-    const c = this.w.cls(u);
     const { events } = this.collect(() => {
-      const needFuel = c.fuel - u.fuel;
-      let fuelCost = 0, matCost = 0;
-      if (needFuel > 0) {
-        const can = Math.min(needFuel, s.players[u.owner].energy * 100);
-        u.fuel += can; fuelCost = can;
+      const used = refillFrom(this.w, u, s.players[u.owner].energy, shop.material);
+      if (used) {
+        s.players[u.owner].energy = Math.max(0, s.players[u.owner].energy - used[0]);
+        shop.material = Math.max(0, shop.material - used[1]);
       }
-      c.weapons.forEach((wp, i) => {
-        const need = wp.ammo - u.ammo[i];
-        if (need > 0) {
-          const can = Math.min(need, shop.material * 100 - matCost);
-          if (can > 0) { u.ammo[i] += can; matCost += can; }
-        }
-      });
-      if (fuelCost > 0) s.players[u.owner].energy -= Math.max(1, Math.trunc(fuelCost / 100));
-      if (matCost > 0) shop.material -= Math.max(1, Math.trunc(matCost / 100));
-      // refuelling or repairing in a building costs one experience point (manual p. 67)
-      if (fuelCost > 0 || matCost > 0) u.experience = Math.max(0, u.experience - 1);
       this.emit('message', { type: 'refuel', unitId }, u.owner);
     });
     return { ok: true, events };
@@ -655,6 +671,125 @@ export class Game {
       shop.material -= n;
       u.experience = Math.max(0, u.experience - 1);
       this.emit('message', { type: 'repair', unitId }, u.owner);
+    });
+    return { ok: true, events };
+  }
+
+  // ------------------------------------------------------------------ supply, construction, height (support.ts)
+  /**
+   * May the unit perform a special action now? Not after attacking; a unit that has not moved may serve up to six
+   * neighbours (manual p. 61), the check functions of the original test no "action used" flag.
+   */
+  private canAct(u: UnitState) {
+    return u.alive && !u.container && u.owner === this.s.activePlayer && !this.s.outcome
+      && !(u.flags & (UnitFlag.DONE | UnitFlag.ATTACKED));
+  }
+
+  /** Neighbouring units a supply / repair vehicle can serve (game functions 0x1b / 0x3a). */
+  supportTargets(unitId: number): { refill: number[]; repair: number[] } {
+    const u = this.s.units[unitId], w = this.w;
+    const out = { refill: [] as number[], repair: [] as number[] };
+    if (!this.canAct(u)) return out;
+    for (const p of w.neighbours(u.x, u.y)) {
+      const t = p && w.unitAt(p.x, p.y);
+      if (!t || t.id === u.id) continue;
+      if (refillNeed(w, t) && canRefill(w, u, t)) out.refill.push(t.id);
+      if (repairNeed(w, t) > 0 && canRepair(w, u, t)) out.repair.push(t.id);
+    }
+    return out;
+  }
+
+  /** After a special action the unit is finished if it has already moved (FUN_00424ea0: flag 0x20 -> FUN_00442b3a). */
+  private afterSpecialAction(u: UnitState) {
+    u.flags |= UnitFlag.ACTION_USED;
+    if (u.flags & UnitFlag.MOVED) this.unitDone(u);
+    this.afterAction();
+  }
+
+  refillUnit(unitId: number, targetId: number): CommandResult {
+    const u = this.s.units[unitId];
+    if (!this.supportTargets(unitId).refill.includes(targetId)) return { ok: false, reason: 'cannot refill', events: [] };
+    const { events } = this.collect(() => {
+      refillByUnit(this.w, u, this.s.units[targetId]);
+      this.emit('message', { type: 'refuel', unitId: targetId, by: unitId }, u.owner);
+      this.afterSpecialAction(u);
+    });
+    return { ok: true, events };
+  }
+
+  repairUnit(unitId: number, targetId: number): CommandResult {
+    const u = this.s.units[unitId];
+    if (!this.supportTargets(unitId).repair.includes(targetId)) return { ok: false, reason: 'cannot repair', events: [] };
+    const { events } = this.collect(() => {
+      repairByUnit(this.w, u, this.s.units[targetId]);
+      this.emit('message', { type: 'repair', unitId: targetId, by: unitId }, u.owner);
+      this.afterSpecialAction(u);
+    });
+    return { ok: true, events };
+  }
+
+  /** Construction targets of a vehicle: field -> bit set of Build values (road, rail, trench, demolish). */
+  buildTargets(unitId: number): Map<number, number> {
+    const u = this.s.units[unitId];
+    if (!this.canAct(u)) return new Map();
+    this.s.buildMask ??= initialBuildMask(this.w);
+    return buildTargets(this.w, u, this.s.buildMask);
+  }
+
+  build(unitId: number, field: number, what: number): CommandResult {
+    const u = this.s.units[unitId];
+    const opt = this.buildTargets(unitId).get(field) ?? 0;
+    if (!(opt & (1 << what))) return { ok: false, reason: 'cannot build here', events: [] };
+    const { events } = this.collect(() => {
+      if (buildOn(this.w, u, field, what)) {
+        this.emit('map-change', { field, build: what, unitId });
+        updateVisionAll(this.w);
+      }
+      this.afterSpecialAction(u);
+    });
+    return { ok: true, events };
+  }
+
+  /** Climb / surface (up) or descend / dive (down) by one level. */
+  canChangeHeight(unitId: number, up: boolean): boolean {
+    const u = this.s.units[unitId];
+    return u.alive && !u.container && u.owner === this.s.activePlayer && !this.s.outcome && !(u.flags & UnitFlag.DONE)
+      && canChangeHeight(this.w, u, up);
+  }
+
+  changeHeight(unitId: number, up: boolean): CommandResult {
+    if (!this.canChangeHeight(unitId, up)) return { ok: false, reason: 'cannot change height', events: [] };
+    const u = this.s.units[unitId];
+    const { events } = this.collect(() => {
+      changeHeight(u, up);
+      this.emit('message', { type: 'height', unitId, up }, u.owner);
+      updateVisionAll(this.w);
+      this.afterAction();
+    });
+    return { ok: true, events };
+  }
+
+  /**
+   * Campaign training (game functions 0x43-0x45, FUN_00422864 / FUN_00422b54): a unit in a building that is neither a
+   * factory nor a depot gains one experience point per training point of its category (ground, water, air), up to 11.
+   */
+  canTrain(unitId: number): boolean {
+    const s = this.s, u = s.units[unitId];
+    if (u.container?.kind !== 'shop' || u.owner !== s.activePlayer || s.outcome) return false;
+    if (s.shops[u.container.id].type & 0x18) return false;
+    if (u.experience >= MAX_XP || (u.flags & UnitFlag.ACTION_USED)) return false;
+    const pts = s.players[u.owner].trainingPoints;
+    return !!pts && pts[trainingCategory(this.w.cls(u).flags >>> 0)] > 0;
+  }
+
+  train(unitId: number): CommandResult {
+    if (!this.canTrain(unitId)) return { ok: false, reason: 'cannot train', events: [] };
+    const s = this.s, u = s.units[unitId];
+    const { events } = this.collect(() => {
+      const pts = s.players[u.owner].trainingPoints!;
+      pts[trainingCategory(this.w.cls(u).flags >>> 0)]--;
+      u.experience = Math.min(MAX_XP, u.experience + 1);
+      this.emit('message', { type: 'train', unitId }, u.owner);
     });
     return { ok: true, events };
   }

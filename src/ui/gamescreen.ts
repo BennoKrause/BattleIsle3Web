@@ -6,7 +6,7 @@ import { Desktop, el, label, button, DESKTOP_W, DESKTOP_H } from './desktop.ts';
 import { GameWindow } from './window.ts';
 import { MapRenderer, rgb } from '../render/mapview.ts';
 import type { PlayerChroma } from '../render/chroma.ts';
-import type { Game } from '../engine/game.ts';
+import type { CommandResult, Game } from '../engine/game.ts';
 import { ComputerPlayer } from '../engine/ai.ts';
 import type { GameEvent, UnitState } from '../engine/state.ts';
 import type { CombatResult } from '../engine/combat.ts';
@@ -22,6 +22,7 @@ import type { FxPlayer } from '../audio/fx.ts';
 import { NEUTRAL, UnitFlag } from '../engine/state.ts';
 import { World } from '../engine/world.ts';
 import { UCF } from '../engine/classes.ts';
+import { Build } from '../engine/support.ts';
 
 export interface ScreenHooks {
   /** Plays the video of a sequence id (resolves when done). */
@@ -51,7 +52,12 @@ export interface ScreenContext {
   fight?: { enabled(): boolean; load(): Promise<FightAssets>; fx: FxPlayer };
 }
 
-type Mode = { kind: 'none' } | { kind: 'move'; unitId: number; area: Set<number> } | { kind: 'attack'; unitId: number; targets: Map<number, number> };
+type Mode = { kind: 'none' } | { kind: 'move'; unitId: number; area: Set<number> } | { kind: 'attack'; unitId: number; targets: Map<number, number> }
+  | { kind: 'support'; unitId: number; action: 'refill' | 'repair'; targets: Set<number> }
+  | { kind: 'build'; unitId: number; what: number; fields: Set<number> };
+
+/** Construction commands of the build window: chip icon, title (manual p. 62: Straßenbau, Schienenbau, Befestigung, Abriß). */
+const BUILD_CHIPS: [number, string, string][] = [[Build.ROAD, 'C01_20', 'Straße bauen'], [Build.RAIL, 'C01_21', 'Schiene bauen'], [Build.TRENCH, 'C01_22', 'Befestigung bauen'], [Build.DEMOLISH, 'C01_23', 'Abreißen']];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -263,6 +269,8 @@ export class GameScreen {
     const hl = {
       move: this.mode.kind === 'move' ? this.mode.area : undefined,
       attack: this.mode.kind === 'attack' ? new Set([...this.mode.targets.keys()].map((id) => this.game.w.idx(s.units[id].x, s.units[id].y))) : undefined,
+      action: this.mode.kind === 'support' ? new Set([...this.mode.targets].map((id) => this.game.w.idx(s.units[id].x, s.units[id].y)))
+        : this.mode.kind === 'build' ? this.mode.fields : undefined,
       selected: this.selected >= 0 && s.units[this.selected]?.alive ? this.game.w.idx(s.units[this.selected].x, s.units[this.selected].y) : undefined,
       cursor: this.cursor,
       moving: this.animating ?? undefined,
@@ -401,6 +409,17 @@ export class GameScreen {
       this.closeChip();
       return;
     }
+    if (this.mode.kind === 'support' || this.mode.kind === 'build') {
+      const m = this.mode;
+      this.mode = { kind: 'none' };
+      const t = s.unitAt[f];
+      let res: CommandResult | null = null;
+      if (m.kind === 'support' && t >= 0 && m.targets.has(t)) res = m.action === 'refill' ? g.refillUnit(m.unitId, t) : g.repairUnit(m.unitId, t);
+      if (m.kind === 'build' && m.fields.has(f)) res = g.build(m.unitId, f, m.what);
+      if (res) await this.afterUnitCommand(m.unitId, res);
+      else this.closeChip();
+      return;
+    }
     if (this.mode.kind === 'move') { this.mode = { kind: 'none' }; this.closeChip(); }
     const uid = s.unitAt[f];
     const shopId = s.shopAt[f];
@@ -433,6 +452,7 @@ export class GameScreen {
     const targets = g.attackTargets(unitId);
     if (targets.length) chips.push(['C01_04', 'Angriff', () => this.startAttack(unitId)]);
     if (u.cargo.length) chips.push(['C01_17', 'Transporter', () => this.openCargo(unitId)]);
+    for (const cmd of this.unitCommands(unitId)) chips.push([cmd.icon, cmd.title, cmd.run]);
     chips.push(['C01_11', 'Info', () => this.showUnitInfo(unitId)]);
     chips.push(['C01_02', 'Schließen', () => { if ((u.flags & UnitFlag.MOVED) || (u.flags & UnitFlag.ATTACKED)) g.skipUnit(unitId); this.closeChip(); this.mode = { kind: 'none' }; this.dirty = true; }]);
     const x0 = 33, step = 32.3;
@@ -447,12 +467,80 @@ export class GameScreen {
     if (g.canMove(u)) actions.push({ id: 'move', label: 'Bewegen', primary: true, run: () => this.startMove(unitId) });
     if (g.attackTargets(unitId).length) actions.push({ id: 'attack', label: 'Angriff', primary: true, run: () => this.startAttack(unitId) });
     if (u.cargo.length) actions.push({ id: 'cargo', label: 'Ladung', run: () => this.openCargo(unitId) });
+    for (const cmd of this.unitCommands(unitId)) actions.push({ id: cmd.id, label: cmd.short, run: cmd.run });
     actions.push({ id: 'info', label: 'Info', run: () => this.showUnitInfo(unitId) });
     actions.push({ id: 'done', label: 'Fertig', run: () => { if ((u.flags & UnitFlag.MOVED) || (u.flags & UnitFlag.ATTACKED)) g.skipUnit(unitId); this.closeChip(); this.mode = { kind: 'none' }; this.dirty = true; } });
     this.mobile!.showCard({
       title: c.name, subtitle: c.description, unit: { type: u.type, scheme: this.ctx.chroma[Math.min(u.owner, 6)]?.scheme ?? 12 },
       stats: [`Stärke ${u.group}/${c.strength}`, `Erfahrung ${u.experience + 1}`], bar: c.fuel > 0 ? u.fuel / c.fuel : undefined, actions,
     });
+  }
+
+  /** Special commands of a unit (supply, repair, construction, height); shared by the chip window and the phone card. */
+  private unitCommands(unitId: number): { id: string; icon: string; title: string; short: string; run: () => void }[] {
+    const g = this.game, u = g.state.units[unitId], c = g.data.unitClasses[u.type];
+    const out: { id: string; icon: string; title: string; short: string; run: () => void }[] = [];
+    const sup = g.supportTargets(unitId);
+    if (sup.refill.length) out.push({ id: 'refill', icon: 'C01_15', title: 'Auftanken / Munition', short: 'Versorgen', run: () => this.startSupport(unitId, 'refill', sup.refill) });
+    if (sup.repair.length) out.push({ id: 'repair', icon: 'C01_13', title: 'Reparieren', short: 'Reparieren', run: () => this.startSupport(unitId, 'repair', sup.repair) });
+    const build = g.buildTargets(unitId);
+    if (build.size) out.push({ id: 'build', icon: 'C01_14', title: 'Bauen', short: 'Bauen', run: () => this.openBuildChoice(unitId) });
+    const water = (c.flags & UCF.DIVE) !== 0;
+    if (g.canChangeHeight(unitId, true)) out.push({ id: 'up', icon: 'C01_09', title: water ? 'Auftauchen' : 'Steigen', short: water ? 'Auftauchen' : 'Steigen', run: () => void this.doChangeHeight(unitId, true) });
+    if (g.canChangeHeight(unitId, false)) out.push({ id: 'down', icon: 'C01_10', title: water ? 'Tauchen' : 'Sinken', short: water ? 'Tauchen' : 'Sinken', run: () => void this.doChangeHeight(unitId, false) });
+    return out;
+  }
+
+  private startSupport(unitId: number, action: 'refill' | 'repair', targets: number[]) {
+    this.mode = { kind: 'support', unitId, action, targets: new Set(targets) };
+    this.closeChip();
+    this.dirty = true;
+  }
+
+  /** Build window: the possible construction commands (manual p. 62), then the field is chosen on the map. */
+  private openBuildChoice(unitId: number) {
+    const g = this.game, targets = g.buildTargets(unitId);
+    let all = 0;
+    for (const o of targets.values()) all |= o;
+    const choices = BUILD_CHIPS.filter(([what]) => all & (1 << what));
+    const start = (what: number) => {
+      const fields = new Set([...targets].filter(([, o]) => o & (1 << what)).map(([f]) => f));
+      this.mode = { kind: 'build', unitId, what, fields };
+      this.closeChip();
+      this.dirty = true;
+    };
+    if (this.mobile) {
+      this.closeChip();
+      this.mobile.showCard({
+        title: 'Bauen', subtitle: g.data.unitClasses[g.state.units[unitId].type].name, stats: [],
+        actions: [...choices.map(([what, , title]) => ({ id: `build-${what}`, label: title, primary: true, run: () => start(what) })),
+          { id: 'back', label: 'Zurück', run: () => this.openChip(unitId) }],
+      });
+      return;
+    }
+    const chip = this.chip;
+    if (!chip) return;
+    chip.querySelectorAll('.btn').forEach((b) => b.remove());
+    const a = this.ctx.assets;
+    const x0 = 33, step = 32.3;
+    [...choices.map(([what, icon, title]) => [icon, title, () => start(what)] as const), ['C01_02', 'Zurück', () => this.openChip(unitId)] as const]
+      .forEach(([icon, title, fn], i) => button(chip, a, 'CMSK000', icon, Math.round(x0 + i * step), 20, fn, title).dataset.cmd = title);
+  }
+
+  private async doChangeHeight(unitId: number, up: boolean) {
+    this.closeChip();
+    await this.afterUnitCommand(unitId, this.game.changeHeight(unitId, up));
+  }
+
+  /** Plays the events of a unit command and reopens the chip window while the unit can still act. */
+  private async afterUnitCommand(unitId: number, res: CommandResult) {
+    this.busy = true;
+    await this.playEvents(res.events);
+    this.busy = false;
+    const u = this.game.state.units[unitId];
+    if (u.alive && !(u.flags & UnitFlag.DONE) && !u.container) this.openChip(unitId);
+    else this.closeChip();
+    this.afterHumanAction();
   }
 
   /** Desktop position of the chip window: right below the unit (above it near the bottom edge), kept on screen. */
@@ -884,6 +972,11 @@ export class GameScreen {
       if (own && selectedUnit >= 0) btn('SP01_02', 56, 'Tanken', () => { g.refuelInShop(selectedUnit); render(); });
       if (own && selectedUnit >= 0) btn('SP01_03', 92, 'Reparieren', () => { g.repairInShop(selectedUnit); render(); });
       if (own && prod.length) btn('SP01_04', 128, 'Produzieren', () => { producing = !producing; render(); });
+      if (own && selectedUnit >= 0 && g.canTrain(selectedUnit)) {
+        const pts = s.players[shop.owner].trainingPoints ?? [0, 0, 0];
+        label(dyn, f.render(`Trainingspunkte Land ${pts[0]}  Wasser ${pts[1]}  Luft ${pts[2]}`, '#c0d0c0'), 310, 316);
+        button(dyn, a, 'CMSK000', 'C01_16', 164, 362, () => { g.train(selectedUnit); render(); }, 'Training').dataset.cmd = 'Training';
+      }
       btn('SP01_00', 600, 'Schließen', () => { win.remove(); this.popup = null; this.dirty = true; });
     };
     let selectedUnit = shop.units[0] ?? -1;
@@ -910,6 +1003,7 @@ export class GameScreen {
         producible: prod.map((t) => ({ type: t, name: g.data.unitClasses[t].name, energy: g.data.unitClasses[t].costEnergy, material: g.data.unitClasses[t].costMaterial })),
         hasSelected: selected >= 0,
         canMoveSelected: selected >= 0 && g.canMove(s.units[selected]),
+        canTrainSelected: selected >= 0 && g.canTrain(selected),
         units: shop.units.map((id) => { const u = s.units[id], c = g.data.unitClasses[u.type]; return { id, name: c.name, type: u.type, scheme: scheme(u.owner), group: u.group, maxGroup: c.strength, xp: u.experience, fuel: `${u.fuel}/${c.fuel}`, selected: id === selected, canMove: g.canMove(u) }; }),
       };
     }, {
@@ -917,6 +1011,7 @@ export class GameScreen {
       move: () => { if (selected >= 0) this.startMove(selected); },
       refuel: () => { if (selected >= 0) g.refuelInShop(selected); this.dirty = true; },
       repair: () => { if (selected >= 0) g.repairInShop(selected); this.dirty = true; },
+      train: () => { if (selected >= 0) g.train(selected); this.dirty = true; },
       toggleProduce: () => { producing = !producing; },
       produce: (type) => { g.produce(shopId, type); producing = false; this.dirty = true; },
     });

@@ -8,7 +8,7 @@ import { createGame } from '../engine/setup.ts';
 import { Difficulty, RF } from '../engine/rules.ts';
 import { Game } from '../engine/game.ts';
 import type { GameState } from '../engine/state.ts';
-import { adaptComputerUnits, newCampaign, transferUnitsIntoPool, transferUnitsOntoMap, type CampaignProgress } from '../engine/campaign.ts';
+import { adaptComputerUnits, earnTrainingPoints, newCampaign, transferUnitsIntoPool, transferUnitsOntoMap, type CampaignProgress } from '../engine/campaign.ts';
 import { Assets } from './assets.ts';
 import { BitmapFont } from './font.ts';
 import { Desktop, el, label, DESKTOP_W } from './desktop.ts';
@@ -246,6 +246,7 @@ export class App {
       const lm = await this.data.loadMission(mission.fileId);
       const state = createGame(this.data, lm, { setId: set.id, difficulty: c.difficulty });
       transferUnitsOntoMap(state, c.pool);
+      state.players[0].trainingPoints = [...(c.trainingPoints ?? [0, 0, 0])];
       if (set.rawKeys.COMPUTERPROGRESSION) adaptComputerUnits(state, c.missionIndex);
       game = new Game(this.data, state);
       this.applySettingsToGame(game);
@@ -365,6 +366,8 @@ export class App {
     const next: CampaignProgress = {
       ...campaign,
       pool: transferUnitsIntoPool(this.data, game.state, campaign.pool),
+      // points left over in this mission plus the points earned by the survivors
+      trainingPoints: earnTrainingPoints(this.data, game.state, game.state.players[0].trainingPoints),
       completed: [...campaign.completed, mission.fileId],
       missionIndex: campaign.missionIndex + 1,
     };

@@ -38,6 +38,14 @@ export class ComputerPlayer {
   actUnit(u: UnitState) {
     const g = this.game;
     if (u.flags & UnitFlag.DONE) return;
+    // supply and repair vehicles serve their neighbours first (the original AI issues CMD_REFILLUNIT / CMD_REPAIRUNIT)
+    const sup = g.supportTargets(u.id);
+    if (sup.repair.length || sup.refill.length) {
+      for (const t of sup.repair) g.repairUnit(u.id, t);
+      for (const t of g.supportTargets(u.id).refill) g.refillUnit(u.id, t);
+      if (u.alive && !(u.flags & UnitFlag.DONE)) g.skipUnit(u.id);
+      return;
+    }
     // attack without moving if that is good enough
     const here = this.bestAttack(u, u.x, u.y);
     const cls = g.data.unitClasses[u.type];

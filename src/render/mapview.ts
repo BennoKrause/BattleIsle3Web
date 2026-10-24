@@ -15,6 +15,8 @@ export interface MapHighlights {
   move?: Set<number>;
   /** Fields with attackable targets. */
   attack?: Set<number>;
+  /** Target fields of supply, repair or construction (others are darkened). */
+  action?: Set<number>;
   selected?: number;
   cursor?: number;
   /** Unit drawn at an intermediate position during a move animation. */
@@ -207,6 +209,8 @@ export class MapRenderer {
       if (!(s.vision[i] & bit)) ctx.drawImage(this.hexTint('rgba(0,0,0,0.35)'), px, py, size, size);
       if (hl.move && i !== hl.selected && !hl.move.has(i)) ctx.drawImage(this.hexTint('rgba(200,30,20,0.45)'), px, py, size, size);
       if (hl.attack) ctx.drawImage(this.hexTint(hl.attack.has(i) ? 'rgba(230,20,20,0.55)' : 'rgba(40,60,110,0.45)'), px, py, size, size);
+      // fields without a possible action turn red, the others keep their look (manual p. 61)
+      if (hl.action && !hl.action.has(i)) ctx.drawImage(this.hexTint('rgba(200,30,20,0.45)'), px, py, size, size);
     }
     if (hl.moving) {
       const u = s.units[hl.moving.unitId];

@@ -163,5 +163,8 @@ export function createGame(data: GameData, lm: LoadedMission, opt: SetupOptions)
   }
   state.actions.sort((a, b) => a.turn - b.turn || a.movement - b.movement);
   state.weather = m.weather;
+  // only overlay kinds present at the start can be built (SDI_1C.EXE: 0x4c8aa0 = 0x10 | type bits of all overlays)
+  state.buildMask = 0x10;
+  for (const o of state.overlay) if (o >= 0) state.buildMask |= (data.terrain[o]?.typeMask ?? 0) & 0xf;
   return state;
 }

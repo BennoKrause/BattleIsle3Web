@@ -1,0 +1,16 @@
+import { NodeSource } from '../lib/node-source.ts';
+import { loadGameData } from '../../src/data/gamedata.ts';
+import { createGame } from '../../src/engine/setup.ts';
+import { Game } from '../../src/engine/game.ts';
+import { canRefill, refillNeed } from '../../src/engine/support.ts';
+const data = await loadGameData(new NodeSource());
+const g = new Game(data, createGame(data, await data.loadMission(104), { setId: 0, difficulty: 1 }));
+g.start();
+const s = g.state;
+const sup = g.unitsOf(0).find((u) => u.type === 18 && !u.container)!;
+const other = g.unitsOf(0).find((u) => u.id !== sup.id && !u.container && g.w.cls(u).fuel > 0)!;
+const free = g.w.neighbours(sup.x, sup.y).find((p) => p && s.unitAt[p.y * s.width + p.x] < 0 && g.w.playable(p.x, p.y))!;
+s.unitAt[other.y * s.width + other.x] = -1; other.x = free.x; other.y = free.y; s.unitAt[free.y * s.width + free.x] = other.id;
+other.fuel = 1;
+console.log('sup', sup.id, sup.ammo, sup.flags, 'other', data.unitClasses[other.type].name, other.layer, sup.layer, other.owner, sup.owner, 'active', s.activePlayer);
+console.log(refillNeed(g.w, other), canRefill(g.w, sup, other), g.supportTargets(sup.id));
