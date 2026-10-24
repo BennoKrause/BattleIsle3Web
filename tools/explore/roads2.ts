@@ -1,0 +1,10 @@
+import { NodeSource } from '../lib/node-source.ts';
+import { loadGameData } from '../../src/data/gamedata.ts';
+const data = await loadGameData(new NodeSource());
+const out: string[] = [];
+data.terrain.forEach((d, i) => { if (d.typeMask & 0b1111) out.push(`${i}:${(d.typeMask & 15).toString(2)}${d.animationLength ? 'a' : ''}`); });
+console.log(data.terrain.length, out.join(' '));
+const m = await data.loadMission(100);
+const cnt = new Map<number, number>();
+for (const o of m.mission.overlay) if (o >= 0) cnt.set(o, (cnt.get(o) ?? 0) + 1);
+console.log([...cnt].sort((a, b) => a[0] - b[0]).map(([o, n]) => `${o}x${n}`).join(' '));

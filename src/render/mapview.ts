@@ -1,6 +1,7 @@
 // Map window renderer: terrain, overlays, buildings, units, fog of war and selection markers.
 // Hex layout: field (x, y) at (16x, 24y + 12(x&1)) in 24-pixel units; zoom levels 24/36/48
 // ("kleine/mittlere/große Hexfelder", TEXT000.TXT).
+import { buildRoadSet, connectionMask, roadLayers } from './roads.ts';
 import type { GameData } from '../data/gamedata.ts';
 import type { GameState } from '../engine/state.ts';
 import { NEUTRAL, Layer, UnitFlag } from '../engine/state.ts';
@@ -51,6 +52,12 @@ export class MapRenderer {
     const tile = terrainSprites[9] ?? terrainSprites[0];
     for (let i = 0; i < TILE * TILE; i++) if (tile[i] !== 0) { img.data[i * 4 + 3] = 255; img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 255; }
     mctx.putImageData(img, 0, 0);
+  }
+
+  private roadSheets: SpriteSheet[] = [];
+  /** LIB/LAYR000..006 pieces (see roads.ts); without them roads are drawn with the generic sprite. */
+  setRoadSprites(libs: Uint8Array[][]) {
+    this.roadSheets = libs.map((l) => new SpriteSheet(buildRoadSet(l), this.palette, 0));
   }
 
   get tileSize() { return TILE * this.zoom; }
@@ -161,7 +168,17 @@ export class MapRenderer {
       const px = p.x - this.scrollX, py = p.y - this.scrollY;
       if (!(s.explored[i] & bit)) continue;
       this.terrainSheet.draw(ctx, terrainSprite(s.terrain[i]), px, py, size);
-      if (s.overlay[i] >= 0) this.terrainSheet.draw(ctx, terrainSprite(s.overlay[i]), px, py, size);
+      const ov = s.overlay[i];
+      if (ov >= 0) {
+        const kinds = this.roadSheets.length ? roadLayers(ov) : [];
+        if (kinds.length) {
+          const nb = w.neighbours(x, y);
+          for (const kind of kinds) {
+            const mask = connectionMask(kind, nb, (nx, ny) => s.overlay[ny * s.width + nx], (nx, ny) => s.shopAt[ny * s.width + nx] >= 0);
+            this.roadSheets[kind]?.draw(ctx, mask, px, py, size);
+          }
+        } else this.terrainSheet.draw(ctx, terrainSprite(ov), px, py, size);
+      }
     }
     // pass 2: building owner markers, units, fog
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {

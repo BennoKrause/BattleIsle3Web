@@ -103,6 +103,7 @@ export class App {
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
     this.renderer = new MapRenderer(this.data, pal, await loadRawSprites(src, 'LIB/PART000.LIB'), await loadRawSprites(src, 'LIB/UNIT000.LIB'));
+    this.renderer.setRoadSprites(await Promise.all([0, 1, 2, 3, 4, 5, 6].map((n) => loadRawSprites(src, `LIB/LAYR00${n}.LIB`))));
     this.renderer.zoom = this.settings.zoom;
     (window as unknown as { bi3app: App }).bi3app = this;
     const params = new URLSearchParams(location.search);
@@ -408,7 +409,13 @@ export class App {
   }
 
   private slotLabel(s: SaveGame | null, i: number) {
-    return s ? `${i + 1}. ${s.label} (${new Date(s.savedAt).toLocaleString()})` : `${i + 1}. – leer –`;
+    if (!s) return `${i + 1}. – leer –`;
+    // the name is shortened, the date stays readable: the list field of the menu is only 324 px wide
+    const date = new Date(s.savedAt).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    let name = s.label;
+    const text = () => `${i + 1}. ${name} (${date})`;
+    while (name.length > 4 && this.fonts.small.measure(text()) > 324) name = name.slice(0, -2).trimEnd();
+    return text();
   }
 
   private async saveDialog() {

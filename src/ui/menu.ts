@@ -32,7 +32,7 @@ export class Menu {
       row.dataset.item = it.text;
       const btn = el('div', 'menu-btn', row, { left: '18px', top: '4px', width: '12px', height: '8px' });
       btn.style.backgroundImage = `url(${assets.buttonState('SETUP000', 'SU01_04', enabled ? 1 : 0).toDataURL()})`;
-      label(row, font.render(it.text, enabled ? '#c4e89c' : '#6a8060'), 44, 2);
+      label(row, font.render(fitText(font, it.text, 324), enabled ? '#c4e89c' : '#6a8060'), 44, 2);
       if (enabled) row.addEventListener('click', (e) => { e.stopPropagation(); it.action(); });
     });
     if (onExit) {
@@ -88,4 +88,12 @@ export function choose(parent: HTMLElement, assets: Assets, font: BitmapFont, ti
     const done = (i: number) => { m?.close(); resolve(i); };
     m = new Menu(parent, assets, font, title, entries.map((e, i) => (typeof e === 'string' ? { text: e, action: () => done(i) } : { ...e, action: () => done(i) })), allowExit ? () => done(-1) : undefined);
   });
+}
+
+/** Shortens a text with ".." so that it fits the menu field (the bitmap fonts cannot be scaled down cleanly). */
+function fitText(font: BitmapFont, text: string, maxWidth: number): string {
+  if (font.measure(text) <= maxWidth) return text;
+  let t = text;
+  while (t.length > 1 && font.measure(`${t}..`) > maxWidth) t = t.slice(0, -1);
+  return `${t.trimEnd()}..`;
 }
