@@ -1,4 +1,4 @@
-# Erstellt ein Release auf GitHub (https://github.com/BennoKrause/BattleIsle3Web).
+﻿# Erstellt ein Release auf GitHub (https://github.com/BennoKrause/BattleIsle3Web).
 #
 #   .\release.ps1 -Version 0.3.0                         Release mit automatisch erzeugten Notizen (Commits seit dem letzten Tag)
 #   .\release.ps1 -Version 0.3.0 -Notes notizen.md       Release-Notizen aus einer Datei
@@ -169,4 +169,4 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
 Remove-Item -LiteralPath $notesFile -Force -ErrorAction SilentlyContinue
 
 Step 'Fertig'
-Write-Host "Release $tag: $url" -ForegroundColor Green
+Write-Host "Release ${tag}: $url" -ForegroundColor Green

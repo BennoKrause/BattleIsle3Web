@@ -1,4 +1,4 @@
-# Startet den Build der Auslieferungspakete (siehe docs/BUILD.md).
+﻿# Startet den Build der Auslieferungspakete (siehe docs/BUILD.md).
 #
 #   .\build.ps1                  beide Pakete   -> dist\docker und dist\windows-portable
 #   .\build.ps1 -Target Docker   nur Docker
