@@ -62,6 +62,21 @@ export class MapRenderer {
     this.roadSheets = libs.map((l) => new SpriteSheet(buildRoadSet(l), this.palette, 0));
   }
 
+  private buffers: CanvasRenderingContext2D[] = [];
+  /** Cleared off-screen buffer n of at least w x h pixels (original scale). */
+  private buffer(n: number, w: number, h: number): CanvasRenderingContext2D {
+    let b = this.buffers[n];
+    if (!b || b.canvas.width < w || b.canvas.height < h) {
+      const c = document.createElement('canvas');
+      c.width = Math.max(w, b?.canvas.width ?? 0); c.height = Math.max(h, b?.canvas.height ?? 0);
+      b = c.getContext('2d')!;
+      b.imageSmoothingEnabled = false;
+      this.buffers[n] = b;
+    }
+    b.clearRect(0, 0, w, h);
+    return b;
+  }
+
   get tileSize() { return TILE * this.zoom; }
 
   resize(w: number, h: number) {
@@ -163,13 +178,18 @@ export class MapRenderer {
       const d = this.data.terrain[t];
       return d && d.animationLength > 0 ? d.animationStart + (animStep % d.animationLength) : t;
     };
+    // Ground, overlays and the hex tints are drawn at original size (24 px tiles on the 16/24 grid) into buffers and
+    // scaled as a whole: drawing every hex scaled at fractional positions left fine seams between the fields.
+    const bx = x0 * 16, by = y0 * 24;
+    const bw = (x1 - x0) * 16 + TILE, bh = (y1 - y0 + 1) * 24 + 12;
+    const terrain = this.buffer(0, bw, bh), tints = this.buffer(1, bw, bh);
+    const tx = (x: number) => x * 16 - bx, ty = (x: number, y: number) => y * 24 + (x & 1) * 12 - by;
     // pass 1: ground and overlays
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
       const i = y * s.width + x;
-      const p = this.fieldPixel(x, y);
-      const px = p.x - this.scrollX, py = p.y - this.scrollY;
       if (!(s.explored[i] & bit)) continue;
-      this.terrainSheet.draw(ctx, terrainSprite(s.terrain[i]), px, py, size);
+      const px = tx(x), py = ty(x, y);
+      this.terrainSheet.draw(terrain, terrainSprite(s.terrain[i]), px, py);
       const ov = s.overlay[i];
       if (ov >= 0) {
         // snow (weather 3/4): roads and paths use the snow-covered pieces of LAYR005/006 (FUN_0043a15f)
@@ -179,12 +199,15 @@ export class MapRenderer {
           const nb = w.neighbours(x, y);
           for (const kind of kinds) {
             const mask = connectionMask(kind, nb, (nx, ny) => s.overlay[ny * s.width + nx], (nx, ny) => s.shopAt[ny * s.width + nx] >= 0);
-            this.roadSheets[kind]?.draw(ctx, mask, px, py, size);
+            this.roadSheets[kind]?.draw(terrain, mask, px, py);
           }
-        } else this.terrainSheet.draw(ctx, terrainSprite(ov), px, py, size);
+        } else this.terrainSheet.draw(terrain, terrainSprite(ov), px, py);
       }
     }
-    // pass 2: building owner markers, units, fog
+    const blit = (buf: CanvasRenderingContext2D) =>
+      ctx.drawImage(buf.canvas, 0, 0, bw, bh, bx * this.zoom - this.scrollX, by * this.zoom - this.scrollY, bw * this.zoom, bh * this.zoom);
+    blit(terrain);
+    // pass 2: building owner markers and units on the screen, fog and highlights into the tint buffer
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
       const i = y * s.width + x;
       if (!(s.explored[i] & bit)) continue;
@@ -208,12 +231,15 @@ export class MapRenderer {
         if (u.owner === viewer && (u.flags & UnitFlag.DONE)) ctx.drawImage(this.hexTint('rgba(255,255,255,0.35)'), px, py, size, size);
         if (u.layer === Layer.HIGH_AIR) ctx.drawImage(this.hexTint('rgba(160,220,255,0.25)'), px, py, size, size);
       }
-      if (!(s.vision[i] & bit)) ctx.drawImage(this.hexTint('rgba(0,0,0,0.35)'), px, py, size, size);
-      if (hl.move && i !== hl.selected && !hl.move.has(i)) ctx.drawImage(this.hexTint('rgba(200,30,20,0.45)'), px, py, size, size);
-      if (hl.attack) ctx.drawImage(this.hexTint(hl.attack.has(i) ? 'rgba(230,20,20,0.55)' : 'rgba(40,60,110,0.45)'), px, py, size, size);
+      const qx = tx(x), qy = ty(x, y);
+      const tint = (color: string) => tints.drawImage(this.hexTint(color), qx, qy);
+      if (!(s.vision[i] & bit)) tint('rgba(0,0,0,0.35)');
+      if (hl.move && i !== hl.selected && !hl.move.has(i)) tint('rgba(200,30,20,0.45)');
+      if (hl.attack) tint(hl.attack.has(i) ? 'rgba(230,20,20,0.55)' : 'rgba(40,60,110,0.45)');
       // fields without a possible action turn red, the others keep their look (manual p. 61)
-      if (hl.action && !hl.action.has(i)) ctx.drawImage(this.hexTint('rgba(200,30,20,0.45)'), px, py, size, size);
+      if (hl.action && !hl.action.has(i)) tint('rgba(200,30,20,0.45)');
     }
+    blit(tints);
     if (hl.moving) {
       const u = s.units[hl.moving.unitId];
       const scheme = chroma[Math.min(u.owner, 6)]?.scheme ?? 12;

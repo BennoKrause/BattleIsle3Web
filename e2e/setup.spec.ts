@@ -28,9 +28,12 @@ test.describe('first-start setup', () => {
     await page.click('#go');
     await expect(page.locator('#run')).toBeVisible();
     await expect(page.locator('#msg')).toContainText(/Video|Spieldateien|Einrichtung/);
-    // the page switches to the game when the import is finished
-    await page.waitForURL((u) => u.pathname === '/' && true, { timeout: 500_000 });
-    await page.waitForSelector('.menu-row', { timeout: 120_000 });
+    // the import runs for a few minutes; afterwards the setup page loads the game by itself (same URL)
+    await expect.poll(async () => (await (await page.request.get(`${url}/__setup/status`)).json()).state, { timeout: 550_000, intervals: [5000] }).toBe('done');
+    await expect(page.getByText('Battle Isle 3 - Einrichtung')).toHaveCount(0, { timeout: 30_000 });
+    // the game itself: start menu without the intro
+    await page.goto(`${url}/?nointro`);
+    await page.waitForSelector('.menu-row', { timeout: 60_000 });
     expect(errors).toEqual([]);
   });
 });
