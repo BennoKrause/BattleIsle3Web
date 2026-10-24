@@ -168,6 +168,7 @@ export class OriginalAI {
     this.pass = 0;
     this.produceQueue = null;
     this.strategy = this.strategyFlags();
+    this.fixedOrders();
     this.rateUnits();
     this.retreatDamaged();
     this.crystalTransports();
@@ -176,6 +177,43 @@ export class OriginalAI {
     this.escortTargets();
     this.assign([3, 4, 5]);
     this.retreatDamaged();
+  }
+
+  /**
+   * Phase 0 (FUN_00426c2b): orders from the fixed mission orders of the units (flags in `aiOrder`, see state.ts).
+   * 0x10 counts down `aiTimer` and ends the order; 0x08 moves to `aiTarget`; 0x01 → order 2 (hold and fight) while the
+   * unit is strong, fuelled and armed; 0x02 → order 3 (wait) while it is strong; 0x04 → order 4 (hold field `aiTimer`).
+   */
+  private fixedOrders() {
+    for (const u of this.units()) {
+      let f = u.aiOrder & 0xff;
+      if (!f) continue;
+      let kind = 0, prio = 0, target = 0;
+      if (f & 0x10) {
+        u.aiTimer = (u.aiTimer ?? 0) - 1;
+        if (u.aiTimer < 0) f = 0;
+      }
+      if (f & 8) {
+        const t = u.aiTarget ?? 0, tf = this.w.idx(t & 63, t >> 6);
+        if (this.field(u) === tf) { f &= ~0x18; u.aiTarget = 1; }
+        else { kind = 1; target = tf; }
+      }
+      if ((f & 1) && kind === 0) {
+        const ammo = u.ammo.reduce((a, b) => a + b, 0);
+        if (!this.weak(u) && u.fuel >= Math.trunc(this.cls(u).fuel / 3) && ammo !== 0) { kind = 2; prio = u.aiPrio ?? 0; }
+        else { f &= ~0x11; u.aiPrio = 0; u.aiTimer = 0; }
+      }
+      if ((f & 2) && kind === 0) {
+        if (!this.weak(u)) { kind = 3; prio = u.aiPrio ?? 0; }
+        else { f &= ~0x12; u.aiPrio = 0; u.aiTimer = 0; }
+      }
+      if ((f & 4) && kind === 0) {
+        const t = u.aiTimer ?? 0;
+        kind = 4; target = this.w.idx(t & 63, t >> 6); prio = 200;
+      }
+      u.aiOrder = (u.aiOrder & ~0xff) | f;
+      if (kind) this.orders.set(u.id, { kind, prio, target, code: 8 });
+    }
   }
 
   /** FUN_0041bb6e. */
@@ -406,12 +444,12 @@ export class OriginalAI {
   private phaseList(): number[] {
     const us = this.units();
     switch (this.phase) {
-      case 6: return us.filter((u) => !u.container && !(u.flags & UnitFlag.ENTERED) && this.order(u).kind === 1)
+      case 6: return us.filter((u) => !u.container && !(u.flags & UnitFlag.ENTERED) && (this.order(u).kind === 1 || this.order(u).kind === 4))
         .sort((a, b) => (CODE_RANK[this.order(b).code] ?? 0) - (CODE_RANK[this.order(a).code] ?? 0)).map((u) => u.id);
       case 7: case 8: case 9: return us.filter((u) => {
         if (u.container || (u.flags & UnitFlag.ENTERED) || u.type === 0x18) return false;
         const k = this.order(u).kind;
-        if (k !== 0 && k !== 5) return false;
+        if (k !== 0 && k !== 2 && k !== 3 && k !== 5) return false;
         return ((this.ratings.get(u.id)?.flags ?? 0) & 0xe0) === 0;
       }).sort((a, b) => this.combatRank(b) - this.combatRank(a)).map((u) => u.id);
       case 10: case 11: case 12: case 13: case 14: case 15: return us.map((u) => u.id);
@@ -504,9 +542,20 @@ export class OriginalAI {
     this.g.attack(u.id, t.id, weapon);
   }
 
-  /** Phase 6: move along the order, then attack (except capturing units). */
+  /** Phase 6: move along the order, then attack (except capturing units); order 4 attacks the unit on its field. */
   private executeOrder(u: UnitState): boolean {
     const o = this.order(u);
+    if (o.kind === 4) {
+      const tid = this.s.unitAt[o.target];
+      const legal = tid >= 0 ? this.g.attackTargets(u.id).find((t) => t.unitId === tid) : undefined;
+      if (legal) {
+        const wi = this.weapons(u).find(({ i }) => legal.weapons & (1 << i));
+        if (wi) { this.attack(u, this.s.units[tid], wi.i); return true; }
+      }
+      u.aiOrder &= ~4;
+      u.aiTimer = 0;
+      return false;
+    }
     const f = o.code === 1 || o.code === 6 || o.code === 7 ? 2 : 3 | (o.code === 5 ? 4 : 0);
     const step = this.stepTowards(u, o.target, f);
     if (step < 0) return false;
@@ -561,11 +610,13 @@ export class OriginalAI {
     }
     if (best && (best.score > o.prio || o.kind === 2)) {
       if (best.at !== here && !this.move(u, best.at)) return false;
+      // a waiting unit (fixed order 0x02) is free after its first attack
+      if (u.aiOrder & 2) { u.aiOrder &= ~2; u.aiPrio = 0; }
       if (u.alive && this.g.attackTargets(u.id).some((t) => t.unitId === best!.target.id)) this.attack(u, best.target, best.weapon);
       return true;
     }
     // approach (no target within reach)
-    if (anyTarget || (c.flags & UCF.CRYSTAL) || o.kind !== 0 || c.moveRange < 16 || !this.g.canMove(u) || u.aiOrder === 64) return false;
+    if (anyTarget || (c.flags & UCF.CRYSTAL) || o.kind !== 0 || c.moveRange < 16 || !this.g.canMove(u)) return false;
     const R = Math.min(30, Math.max(15, (c.moveRange * 6) >> 3));
     const me = toCombatant(this.w, u);
     const enemies = this.w.unitsOnMap().filter((t) => !this.allied(t.owner) && t.owner < NEUTRAL && !(this.cls(t).flags & UCF.CRYSTAL)
@@ -659,7 +710,7 @@ export class OriginalAI {
   /** Phase 15 (FUN_0041adc4): leave buildings and transporters. */
   private moveOut(u: UnitState): boolean {
     if (!u.container || (u.flags & UnitFlag.ENTERED) || this.weak(u, 1) || (this.cls(u).flags & UCF.CRYSTAL)) return false;
-    if (!this.g.canMove(u) || u.aiOrder === 64) return false;
+    if (!this.g.canMove(u)) return false;
     const home = this.field(u);
     let best = -1, field = -1;
     for (const f of this.g.moveArea(u.id).targets.keys()) {

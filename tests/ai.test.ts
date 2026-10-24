@@ -80,3 +80,35 @@ describe.skipIf(!hasGameData)('original computer player', () => {
     expect(sub.alive ? sub.layer : Layer.SUBMERGED).toBe(Layer.SUBMERGED);
   });
 });
+
+describe.skipIf(!hasGameData)('fixed computer orders from the mission (FUN_0042c109 -> FUN_00427912)', () => {
+  it('are read from the AI point records (bytes 72-79)', async () => {
+    const g = await game(100);
+    const u = g.state.units.find((x) => x.alive && x.x === 13 && x.y === 7)!;
+    expect(u.aiOrder & 0xff).toBe(1);
+    expect(u.aiPrio).toBe(100);
+  });
+
+  it('0x01: the unit holds its position and fights (order 2); 0x02: the unit waits (order 3)', async () => {
+    const g = await game(101);
+    const holder = g.state.units.find((x) => x.alive && x.x === 15 && x.y === 19)!; // flag 1, priority 140
+    const waiter = g.state.units.find((x) => x.alive && x.x === 14 && x.y === 18)!; // flag 2, priority 100
+    turnOf(g, holder.owner);
+    const ai = new OriginalAI(g) as any;
+    ai.begin();
+    expect(ai.orders.get(holder.id)).toMatchObject({ kind: 2, prio: 140, code: 8 });
+    expect(ai.orders.get(waiter.id)).toMatchObject({ kind: 3, prio: 100, code: 8 });
+    const at = [holder.x, holder.y];
+    for (let i = 0; i < 500 && ai.step(); i++);
+    if (holder.alive) expect([holder.x, holder.y]).toEqual(at); // order 2 never moves
+  });
+
+  it('a weak unit loses its fixed order and becomes free', async () => {
+    const g = await game(101);
+    const holder = g.state.units.find((x) => x.alive && x.x === 15 && x.y === 19)!;
+    turnOf(g, holder.owner);
+    holder.group = 1;
+    new OriginalAI(g).begin();
+    expect(holder.aiOrder & 1).toBe(0);
+  });
+});

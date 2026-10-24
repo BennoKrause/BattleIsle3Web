@@ -129,9 +129,17 @@ export function createGame(data: GameData, lm: LoadedMission, opt: SetupOptions)
         unit.container = { kind: 'unit', id: carrierId };
         carrier.cargo.push(unit.id);
       }
-    } else if (s.kind === 2) {
+    }
+    if (s.kind & 2) {
+      // fixed computer order for the unit on this field (FUN_0042c109 -> FUN_00427912)
       const unitId = state.unitAt[idx];
-      if (unitId >= 0) state.units[unitId].aiOrder = s.aiCommand;
+      if (unitId >= 0) {
+        const u = state.units[unitId], v = new DataView(s.raw.buffer, s.raw.byteOffset, s.raw.byteLength);
+        u.aiOrder = s.raw[72];
+        u.aiPrio = v.getInt16(74, true) * 10;
+        u.aiTarget = v.getInt16(76, true);
+        u.aiTimer = v.getInt16(78, true);
+      }
     }
   }
 

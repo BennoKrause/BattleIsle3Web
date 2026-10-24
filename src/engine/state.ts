@@ -42,8 +42,16 @@ export interface UnitState {
   moved: number;
   cargo: number[];
   container: Container;
-  /** AI order from the mission (0 attack, 1 defend, 64 hold position). */
+  /** Fixed computer order from the mission (AI point record bytes 72-79, SDI_1C.EXE FUN_00427912): flags
+   *  1 hold and fight, 2 wait until it attacks, 4 hold target field `aiTimer`, 8 move to `aiTarget`, 0x10 limited by
+   *  `aiTimer` turns. */
   aiOrder: number;
+  /** Priority of the fixed order (bytes 74-75 × 10). */
+  aiPrio?: number;
+  /** Target field of the fixed order (y·64 + x, bytes 76-77). */
+  aiTarget?: number;
+  /** Turns left (flag 0x10) or the field to hold (flag 4) (bytes 78-79). */
+  aiTimer?: number;
   name?: string;
 }
 
