@@ -29,13 +29,16 @@ export interface CardData {
   actions: CardAction[];
 }
 
+/** Values of a unit in a building or on board: strength, ammunition per weapon ("6/8 2/2"), fuel. */
+export interface UnitStats { group: number; maxGroup: number; ammo: string; fuel: string }
+
 export interface ShopView {
   title: string;
   owner: string;
   energy: number;
   material: number;
   income: string;
-  units: { id: number; name: string; type: number; scheme: number; group: number; maxGroup: number; xp: number; fuel: string; selected: boolean; canMove: boolean }[];
+  units: (UnitStats & { id: number; name: string; type: number; scheme: number; xp: number; selected: boolean; canMove: boolean })[];
   own: boolean;
   producible: { type: number; name: string; energy: number; material: number }[];
   producing: boolean;
@@ -347,22 +350,27 @@ export class MobileUi {
     for (const l of lines) setParagraph(el('p', 'm-line', body), l, 330, { color: COLORS.text, scale: 1.4 });
   }
 
-  /** A row with unit symbol, name and a secondary line (cargo, building contents). */
-  private unitRow(parent: HTMLElement, u: { id: number; name: string; type: number; scheme: number }, sub: string, selected = false) {
+  /** A row with unit symbol, name and secondary lines (cargo, building contents). */
+  private unitRow(parent: HTMLElement, u: { id: number; name: string; type: number; scheme: number }, sub: string[], selected = false) {
     const b = el('button', `m-weapon${selected ? ' m-selected' : ''}`, parent);
     b.dataset.unit = String(u.id);
     this.unitIcon(el('span', 'm-icon-well', b), u.type, u.scheme);
     const mid = el('span', 'm-w-mid', b);
     this.text(el('span', 'm-w-name', mid), u.name, { color: COLORS.text, scale: 1.5 });
-    this.text(el('span', 'm-w-sub', mid), sub, { color: COLORS.muted, scale: 1.15 });
+    for (const line of sub) this.text(el('span', 'm-w-sub', mid), line, { color: COLORS.muted, scale: 1.15 });
     return b;
   }
 
+  /** Two lines: units and fuel, then the ammunition of every weapon (up to four, too long for one line). */
+  private statsLines(u: UnitStats) {
+    return [`Einheiten ${u.group}/${u.maxGroup}   Treibstoff ${u.fuel}`, `Munition ${u.ammo}`];
+  }
+
   /** Units on board; `blocked` = may still move but no field around the transporter can be entered. */
-  openCargo(title: string, rows: { id: number; name: string; type: number; scheme: number; state: 'move' | 'moved' | 'blocked' }[], onMove: (id: number) => void) {
+  openCargo(title: string, rows: (UnitStats & { id: number; name: string; type: number; scheme: number; state: 'move' | 'moved' | 'blocked' })[], onMove: (id: number) => void) {
     const { body, close } = this.sheet(title, 'm-cargo');
     for (const r of rows) {
-      const b = this.unitRow(body, r, r.state === 'move' ? 'Bewegen' : r.state === 'moved' ? 'bereits bewegt' : 'kein Ausstieg möglich');
+      const b = this.unitRow(body, r, [...this.statsLines(r), r.state === 'move' ? 'Bewegen' : r.state === 'moved' ? 'bereits bewegt' : 'kein Ausstieg möglich']);
       b.disabled = r.state !== 'move';
       b.addEventListener('click', () => { close(); onMove(r.id); });
     }
@@ -380,7 +388,7 @@ export class MobileUi {
       this.text(el('div', 'm-shop-sub', head), `${v.owner}   Energie ${v.energy}   Material ${v.material}   ${v.income}`, { color: COLORS.muted, scale: 1.15 });
       this.text(el('h3', 'm-section', body), `Einheiten im Gebäude (${v.units.length})`, { color: COLORS.accent, scale: 1.5 });
       for (const u of v.units) {
-        const b = this.unitRow(body, { id: u.id, name: u.name, type: u.type, scheme: u.scheme }, `Stärke ${u.group}/${u.maxGroup}   Erfahrung ${u.xp + 1}   Treibstoff ${u.fuel}`, u.selected);
+        const b = this.unitRow(body, { id: u.id, name: u.name, type: u.type, scheme: u.scheme }, [...this.statsLines(u), `Erfahrung ${u.xp + 1}`], u.selected);
         b.addEventListener('click', () => { act.select(u.id); render(); });
       }
       if (v.own) {

@@ -15,7 +15,7 @@ import type { CombatResult } from '../engine/combat.ts';
 import { showFightPanel, type FightSide } from './fightpanel.ts';
 import { showFightWindow } from './fightwindow.ts';
 import { UiaWindow, type UiaTarget } from './uiawindow.ts';
-import { MobileUi, type CardAction } from './mobile/mobileui.ts';
+import { MobileUi, type CardAction, type UnitStats } from './mobile/mobileui.ts';
 import { installTouchMap } from './mobile/touch.ts';
 import { COLORS, fitScale, setText } from './mobile/pixel.ts';
 import type { FileSource } from '../data/source.ts';
@@ -1098,7 +1098,7 @@ export class GameScreen {
         hasSelected: selected >= 0,
         canMoveSelected: selected >= 0 && g.canMove(s.units[selected]),
         canTrainSelected: selected >= 0 && g.canTrain(selected),
-        units: shop.units.map((id) => { const u = s.units[id], c = g.data.unitClasses[u.type]; return { id, name: c.name, type: u.type, scheme: scheme(u.owner), group: u.group, maxGroup: c.strength, xp: u.experience, fuel: `${u.fuel}/${c.fuel}`, selected: id === selected, canMove: g.canMove(u) }; }),
+        units: shop.units.map((id) => { const u = s.units[id], c = g.data.unitClasses[u.type]; return { ...this.unitStats(id), id, name: c.name, type: u.type, scheme: scheme(u.owner), xp: u.experience, selected: id === selected, canMove: g.canMove(u) }; }),
       };
     }, {
       select: (id) => { selected = id; },
@@ -1111,13 +1111,20 @@ export class GameScreen {
     });
   }
 
+  /** Strength, ammunition of every weapon that uses ammunition, fuel (phone lists of buildings and cargo). */
+  private unitStats(id: number): UnitStats {
+    const u = this.game.state.units[id], c = this.game.data.unitClasses[u.type];
+    const ammo = c.weapons.map((w, i) => (w.ammo > 0 && c.weaponNames[i] && c.weaponNames[i] !== '-' ? `${u.ammo[i] ?? 0}/${w.ammo}` : '')).filter(Boolean);
+    return { group: u.group, maxGroup: c.strength, ammo: ammo.join(' ') || '–', fuel: `${u.fuel}/${c.fuel}` };
+  }
+
   private openCargo(unitId: number) {
     const g = this.game, s = g.state;
     const u = s.units[unitId];
     const names = u.cargo.map((id) => g.data.unitClasses[s.units[id].type].name);
     this.closeChip();
     if (this.mobile) {
-      this.mobile.openCargo('Ladung', u.cargo.map((id) => ({ id, name: g.data.unitClasses[s.units[id].type].name, type: s.units[id].type, scheme: this.ctx.chroma[Math.min(s.units[id].owner, 6)]?.scheme ?? 12, state: !g.canMove(s.units[id]) ? 'moved' as const : g.moveArea(id).targets.size ? 'move' as const : 'blocked' as const })), (id) => this.startMove(id));
+      this.mobile.openCargo('Ladung', u.cargo.map((id) => ({ ...this.unitStats(id), id, name: g.data.unitClasses[s.units[id].type].name, type: s.units[id].type, scheme: this.ctx.chroma[Math.min(s.units[id].owner, 6)]?.scheme ?? 12, state: !g.canMove(s.units[id]) ? 'moved' as const : g.moveArea(id).targets.size ? 'move' as const : 'blocked' as const })), (id) => this.startMove(id));
       return;
     }
     const win = el('div', 'gwin cargowin', this.ctx.desktop.layer, { left: '300px', top: '200px', width: '240px', height: `${40 + names.length * 18}px` });

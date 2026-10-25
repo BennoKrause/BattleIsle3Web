@@ -174,3 +174,35 @@ test('after moving a transporter its cargo can still be unloaded from the unit c
   expect(mode.fields).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+const STATS = /Einheiten \d+\/\d+ +Treibstoff \d+\/\d+\s+Munition \S/;
+
+test('the cargo list shows strength, fuel and ammunition of every unit on board', async ({ page }) => {
+  const errors: string[] = [];
+  await startMission(page, 103, errors);
+  const cargo = await page.evaluate(() => {
+    const scr = (window as any).bi3app.running.screen, g = scr.game;
+    const t = g.unitsOf(0).find((u: any) => u.cargo.length)!;
+    scr.openCargo(t.id);
+    return t.cargo[0];
+  });
+  expect(await page.locator(`.m-cargo button[data-unit="${cargo}"]`).innerText()).toMatch(STATS);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: 'test-results/mobile-cargo-stats.png' });
+  expect(await page.evaluate(() => [...document.querySelectorAll('.m-cargo .m-px')].every((c) => c.getBoundingClientRect().right <= window.innerWidth))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('the building list shows strength, fuel and ammunition of every unit inside', async ({ page }) => {
+  const errors: string[] = [];
+  await startMission(page, 107, errors);
+  await page.evaluate(() => {
+    const scr = (window as any).bi3app.running.screen, s = scr.game.state;
+    scr.openShop(s.shops.findIndex((sh: any) => sh.owner === 0 && sh.units.length));
+  });
+  expect(await page.locator('.m-shop button[data-unit]').first().innerText()).toMatch(STATS);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: 'test-results/mobile-shop-stats.png' });
+  expect(await page.evaluate(() => [...document.querySelectorAll('.m-shop .m-px')].every((c) => c.getBoundingClientRect().right <= window.innerWidth))).toBe(true);
+  expect(errors).toEqual([]);
+});
