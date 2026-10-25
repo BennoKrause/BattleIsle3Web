@@ -10,7 +10,8 @@ import type { MapRenderer } from '../../render/mapview.ts';
 import type { PlayerChroma } from '../../render/chroma.ts';
 import { el } from '../desktop.ts';
 import { AnimationCache, unitProperties, type UiaTarget } from '../uiawindow.ts';
-import { createFightPanel, type FightPanelInput } from '../fightpanel.ts';
+import type { FightPanelInput } from '../fightpanel.ts';
+import { createMobileFightStats } from './fightstats.ts';
 import { FightScene, Raster, type FightAssets, type FightInput3D } from '../../render/fight3d.ts';
 import type { FxPlayer } from '../../audio/fx.ts';
 import { COLORS, setParagraph, setText, type PixelFonts } from './pixel.ts';
@@ -357,11 +358,12 @@ export class MobileUi {
     return b;
   }
 
-  openCargo(title: string, rows: { id: number; name: string; type: number; scheme: number; canMove: boolean }[], onMove: (id: number) => void) {
+  /** Units on board; `blocked` = may still move but no field around the transporter can be entered. */
+  openCargo(title: string, rows: { id: number; name: string; type: number; scheme: number; state: 'move' | 'moved' | 'blocked' }[], onMove: (id: number) => void) {
     const { body, close } = this.sheet(title, 'm-cargo');
     for (const r of rows) {
-      const b = this.unitRow(body, r, r.canMove ? 'Bewegen' : 'bereits bewegt');
-      b.disabled = !r.canMove;
+      const b = this.unitRow(body, r, r.state === 'move' ? 'Bewegen' : r.state === 'moved' ? 'bereits bewegt' : 'kein Ausstieg möglich');
+      b.disabled = r.state !== 'move';
       b.addEventListener('click', () => { close(); onMove(r.id); });
     }
     if (!rows.length) setParagraph(el('p', 'm-line', body), 'Keine Ladung.', 330, { scale: 1.4 });
@@ -426,7 +428,7 @@ export class MobileUi {
   }
 
   // ------------------------------------------------------------------ fight
-  /** Full-screen fight: 3D scene (when `scene` is given) and the statistics strip; the button skips. */
+  /** Full-screen fight: 3D scene (when `scene` is given) and the large statistics panel; the button skips. */
   showFight(o: { fight3d: FightAssets | null; fx: FxPlayer; panel: FightPanelInput; scene: FightInput3D | null }): Promise<void> {
     return new Promise((resolve) => {
       const back = el('div', 'm-fight', this.root);
@@ -442,18 +444,14 @@ export class MobileUi {
         view.width = rw; view.height = rh;
         scene = new FightScene(o.fight3d, o.scene);
       }
-      const panelWrap = el('div', 'm-fight-panel', back);
-      const inner = el('div', 'm-fight-panel-inner', panelWrap);
+      if (!scene) back.classList.add('m-fight-quick');
       const firstHit = scene ? Math.min(...scene.sounds.filter((s) => s.lib === 'FGTEXPLO').map((s) => s.t), scene.duration) : 0;
-      const panel = createFightPanel(inner, this.d.assets, this.d.fonts, o.panel, { left: 0, top: 0, startDelay: firstHit, embedded: true });
-      const fit = () => { const k = panelWrap.clientWidth / 640; inner.style.transform = `scale(${k})`; panelWrap.style.height = `${73 * k}px`; };
-      fit();
+      const panel = createMobileFightStats(back, this.d.assets, o.panel, firstHit);
       const skip = el('button', 'm-cmd m-fight-skip', back);
       this.text(el('span', 'm-cmd-label', skip), 'Weiter  >', { color: COLORS.accent, scale: 1.6 });
       let closed = false;
-      const finish = () => { if (closed) return; closed = true; window.removeEventListener('resize', fit); panel.close(); back.remove(); resolve(); };
+      const finish = () => { if (closed) return; closed = true; panel.close(); back.remove(); resolve(); };
       skip.addEventListener('click', finish);
-      window.addEventListener('resize', fit);
       const total = scene ? Math.max(scene.duration, firstHit + 2600) : 3600;
       const start = performance.now();
       const raster = new Raster(rw, rh);

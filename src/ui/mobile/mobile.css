@@ -203,9 +203,22 @@ body.mobile-ui .m-menu-sheet .m-item { width: 100%; }
 body.mobile-ui .m-fight { position: absolute; inset: 0; z-index: 8000; background: #000; }
 body.mobile-ui .m-fight-stage { position: absolute; inset: 0; }
 body.mobile-ui .m-fight-view { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; image-rendering: auto; display: block; }
-body.mobile-ui .m-fight-panel { position: absolute; left: 0; right: 0; bottom: var(--safe-b); overflow: hidden; }
-body.mobile-ui .m-fight-panel-inner { width: 640px; height: 73px; position: relative; transform-origin: 0 0; }
-body.mobile-ui .m-fight-panel-inner .fightpanel { position: absolute; left: 0; top: 0; }
+body.mobile-ui .m-fstats { position: absolute; left: 8px; right: 8px; bottom: calc(8px + var(--safe-b)); display: flex; flex-direction: column; gap: 6px; }
+body.mobile-ui .m-fight-quick .m-fstats { bottom: auto; top: 50%; transform: translateY(-50%); }
+body.mobile-ui .m-fs-heads { display: flex; gap: 6px; }
+body.mobile-ui .m-fs-head { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; line-height: 0; background: rgba(7, 20, 27, 0.88); padding: 6px 8px; overflow: hidden; }
+body.mobile-ui .m-fs-head.m-fs-r { align-items: flex-end; }
+body.mobile-ui .m-fs-top { display: flex; align-items: center; gap: 8px; }
+body.mobile-ui .m-fs-r .m-fs-top { flex-direction: row-reverse; }
+body.mobile-ui .m-fs-rank { width: 48px; height: 48px; image-rendering: pixelated; }
+body.mobile-ui .m-fs-rows { display: grid; grid-template-columns: 1fr; gap: 3px; line-height: 0; background: rgba(7, 20, 27, 0.88); padding: 6px 8px 8px; }
+body.mobile-ui .m-fs-label { display: flex; justify-content: center; margin-top: 3px; }
+body.mobile-ui .m-fs-row, body.mobile-ui .m-fs-total { display: flex; gap: 4px; height: 14px; }
+body.mobile-ui .m-fs-half { flex: 1; display: flex; justify-content: flex-end; background: #0a2230; box-shadow: inset 0 0 0 1px #16384a; }
+body.mobile-ui .m-fs-half.m-fs-r { justify-content: flex-start; }
+body.mobile-ui .m-fs-bar { height: 100%; transition: width 50ms linear; }
+body.mobile-ui .m-fs-total { gap: 0; justify-content: space-between; background: #0a2230; box-shadow: inset 0 0 0 1px #16384a; }
+body.mobile-ui .m-fs-tbar { height: 100%; transition: width 50ms linear; }
 body.mobile-ui .m-fight-skip { position: absolute; right: 10px; top: calc(10px + var(--safe-t)); flex: none; min-width: 0; min-height: 48px; padding: 0 14px; }
 
 /* the desktop helpers for flash messages and turn banners are not used on phones */

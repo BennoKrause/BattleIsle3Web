@@ -1117,7 +1117,7 @@ export class GameScreen {
     const names = u.cargo.map((id) => g.data.unitClasses[s.units[id].type].name);
     this.closeChip();
     if (this.mobile) {
-      this.mobile.openCargo('Ladung', u.cargo.map((id) => ({ id, name: g.data.unitClasses[s.units[id].type].name, type: s.units[id].type, scheme: this.ctx.chroma[Math.min(s.units[id].owner, 6)]?.scheme ?? 12, canMove: g.canMove(s.units[id]) })), (id) => this.startMove(id));
+      this.mobile.openCargo('Ladung', u.cargo.map((id) => ({ id, name: g.data.unitClasses[s.units[id].type].name, type: s.units[id].type, scheme: this.ctx.chroma[Math.min(s.units[id].owner, 6)]?.scheme ?? 12, state: !g.canMove(s.units[id]) ? 'moved' as const : g.moveArea(id).targets.size ? 'move' as const : 'blocked' as const })), (id) => this.startMove(id));
       return;
     }
     const win = el('div', 'gwin cargowin', this.ctx.desktop.layer, { left: '300px', top: '200px', width: '240px', height: `${40 + names.length * 18}px` });

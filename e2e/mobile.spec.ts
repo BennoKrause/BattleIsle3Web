@@ -105,7 +105,7 @@ test('dragging pans the map, the zoom buttons change the zoom and the overview s
   expect(errors).toEqual([]);
 });
 
-test('an attack shows the fight full screen with the statistics strip; the button skips it', async ({ page }) => {
+test('an attack shows the fight full screen with the large statistics panel; the button skips it', async ({ page }) => {
   const errors: string[] = [];
   await startMission(page, 100, errors);
   await page.evaluate(() => {
@@ -119,7 +119,8 @@ test('an attack shows the fight full screen with the statistics strip; the butto
     void app.running.screen.playEvents(g.attack(me.id, foe.id).events);
   });
   await page.locator('.m-fight-view').waitFor({ timeout: 30000 });
-  expect(await page.locator('.m-fight .fightpanel canvas').count()).toBe(1);
+  await expect(page.locator('.m-fight .m-fstats .m-fs-row')).toHaveCount(3);
+  await expect(page.locator('.m-fight .m-fs-name')).toHaveCount(2);
   // full screen: the picture covers the whole viewport, not a 3:2 box in the middle
   const box = await page.locator('.m-fight-view').evaluate((c) => { const r = c.getBoundingClientRect(); return [r.width, r.height]; });
   expect(box[0]).toBeGreaterThanOrEqual(388);
@@ -145,5 +146,31 @@ test('ending the turn from the dock hands over to the computer and back', async 
   await page.locator('.computerwin').waitFor({ timeout: 30000 });
   await page.locator('.msgbox .m-cmd').click({ timeout: 120000 });
   await expect(page.locator('.m-round')).toContainText('Runde 2', { timeout: 60000 });
+  expect(errors).toEqual([]);
+});
+
+test('after moving a transporter its cargo can still be unloaded from the unit card', async ({ page }) => {
+  const errors: string[] = [];
+  await startMission(page, 103, errors);
+  const info = await page.evaluate(() => {
+    const app = (window as any).bi3app, g = app.running.game, s = g.state;
+    const t = g.unitsOf(0).find((u: any) => !u.container && u.cargo.length && g.canMove(u))!;
+    const cargoCls = g.w.cls(s.units[t.cargo[0]]);
+    const coast = (f: number) => g.w.neighbours(f % s.width, Math.trunc(f / s.width)).some((p: any) => p && s.unitAt[p.y * s.width + p.x] < 0 && s.shopAt[p.y * s.width + p.x] < 0
+      && ((cargoCls.terrainMask >>> 0) & g.w.groundMask(p.x, p.y)) !== 0 && g.w.playable(p.x, p.y));
+    const to = [...g.moveArea(t.id).targets.keys()].find((f: any) => s.unitAt[f] < 0 && s.shopAt[f] < 0 && coast(f)) as number;
+    g.moveUnit(t.id, to);
+    app.renderer.centerOn(s, t.x, t.y);
+    app.running.screen.dirty = true;
+    return { id: t.id, cargo: t.cargo[0], field: g.w.idx(t.x, t.y) };
+  });
+  await page.waitForTimeout(400);
+  const pos = await page.evaluate((f) => (window as any).bi3app.running.screen.fieldToClient(f), info.field);
+  await page.touchscreen.tap(pos.x, pos.y);
+  await page.locator('.m-card [data-action="cargo"]').tap();
+  await page.locator(`.m-cargo button[data-unit="${info.cargo}"]:not([disabled])`).tap();
+  const mode = await page.evaluate(() => { const m = (window as any).bi3app.running.screen.mode; return { kind: m.kind, fields: m.area?.size ?? 0 }; });
+  expect(mode.kind).toBe('move');
+  expect(mode.fields).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
