@@ -37,3 +37,21 @@ test('end of turn creates an autosave', async ({ page }) => {
   });
   expect(saved).toBe(true);
 });
+
+test('save on the server, list it and load it again', async ({ page }) => {
+  const errors: string[] = [];
+  await openMission(page, 100, errors);
+  const result = await page.evaluate(async () => {
+    const app = (window as any).bi3app;
+    const snap = app.snapshot('e2e server');
+    const put = await fetch('/__saves/7', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snap) });
+    const list = await (await fetch('/__saves')).json();
+    const back = await (await fetch('/__saves/7')).json();
+    const bad = await fetch('/__saves/7', { method: 'PUT', body: '{"no":"save"}' });
+    await fetch('/__saves/7', { method: 'DELETE' });
+    const gone = await fetch('/__saves/7');
+    return { put: put.status, label: list[7]?.label, slots: list.length, same: JSON.stringify(back.state) === JSON.stringify(snap.state), bad: bad.status, gone: gone.status };
+  });
+  expect(result).toEqual({ put: 200, label: 'e2e server', slots: 10, same: true, bad: 400, gone: 404 });
+  expect(errors).toEqual([]);
+});

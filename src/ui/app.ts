@@ -25,7 +25,7 @@ import { initPixelText, setParagraph, setText, COLORS } from './mobile/pixel.ts'
 import { applyMobileTheme } from './mobile/theme.ts';
 import { parseMidi, type MidiSong } from '../audio/midi.ts';
 import { DEFAULT_CHROMA, parseChroma } from '../render/chroma.ts';
-import { autosave, listSaves, loadSettings, rememberSequence, saveSettings, seenSequences, writeSave, type SaveGame, type Settings } from './storage.ts';
+import { autosave, listSaves, listServerSaves, loadSettings, readServerSave, rememberSequence, saveSettings, seenSequences, writeSave, writeServerSave, type SaveGame, type SaveInfo, type Settings } from './storage.ts';
 
 const UI_LIBS = ['BKGD000', 'CSTA000', 'EXPLO000', 'MNGR000', 'FRMS000', 'CMSK000', 'CMFRM000', 'SETUP000', 'SI000', 'SP000', 'ST000', 'WW000', 'UW000', 'CA000', 'MA000', 'CURS000', 'FF000', 'UI000', 'UI001', 'WB000'];
 const INTRO = [980, 981, 982];
@@ -157,7 +157,7 @@ export class App {
   async diskMenu() {
     this.closeGame();
     this.desktop.clear();
-    const saves = listSaves();
+    const saves = [...listSaves(), ...(await listServerSaves() ?? [])];
     const entries = [
       'Neue Kampagne starten',
       'Einzelne Karte starten',
@@ -411,7 +411,7 @@ export class App {
     else if (c === 3) await this.singleMapDialog();
   }
 
-  private slotLabel(s: SaveGame | null, i: number) {
+  private slotLabel(s: SaveInfo | null, i: number) {
     if (!s) return `${i + 1}. – leer –`;
     // the name is shortened, the date stays readable: the list field of the menu is only 324 px wide
     const date = new Date(s.savedAt).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -421,20 +421,48 @@ export class App {
     return text();
   }
 
+  /** Browser (this device) or server (every device); null = cancelled. Without a server for save games always the browser. */
+  private async chooseStore(title: string, local: (SaveInfo | null)[], server: (SaveInfo | null)[] | null, loading: boolean): Promise<'local' | 'server' | null> {
+    if (!server) return 'local';
+    const c = await choose(this.desktop.layer, this.assets, this.fonts.small, title, [
+      { text: 'Browser (nur dieses Gerät)', enabled: !loading || local.some(Boolean) },
+      { text: 'Server (alle Geräte)', enabled: !loading || server.some(Boolean) },
+    ]);
+    return c < 0 ? null : c === 0 ? 'local' : 'server';
+  }
+
   private async saveDialog() {
-    const saves = listSaves();
-    const c = await choose(this.desktop.layer, this.assets, this.fonts.small, 'Spielstand speichern', saves.slice(0, 8).map((s, i) => this.slotLabel(s, i)));
-    if (c < 0) return;
-    const r = this.running!;
-    const snap = this.snapshot(`${r.mission.name ?? ''} – Runde ${r.game.state.turn + 1}`)!;
-    if (!writeSave(c, snap)) await this.message('Speichern', 'Speichern fehlgeschlagen (Browser-Speicher nicht verfügbar).');
+    for (;;) {
+      const local = listSaves();
+      const server = await listServerSaves();
+      const store = await this.chooseStore('Spielstand speichern', local, server, false);
+      if (!store) return;
+      const saves = store === 'server' ? server! : local;
+      const c = await choose(this.desktop.layer, this.assets, this.fonts.small, 'Spielstand speichern', saves.slice(0, 8).map((s, i) => this.slotLabel(s, i)));
+      if (c < 0) { if (server) continue; return; }
+      const r = this.running!;
+      const snap = this.snapshot(`${r.mission.name ?? ''} – Runde ${r.game.state.turn + 1}`)!;
+      if (store === 'server') {
+        if (!(await writeServerSave(c, snap))) await this.message('Speichern', 'Speichern auf dem Server fehlgeschlagen.');
+      } else if (!writeSave(c, snap)) await this.message('Speichern', 'Speichern fehlgeschlagen (Browser-Speicher nicht verfügbar).');
+      return;
+    }
   }
 
   async loadDialog(inGame = false) {
-    const saves = listSaves();
-    const c = await choose(this.desktop.layer, this.assets, this.fonts.small, 'Spielstand laden', saves.map((s, i) => ({ text: this.slotLabel(s, i), enabled: !!s })));
-    if (c < 0 || !saves[c]) { if (!inGame) await this.diskMenu(); return; }
-    await this.loadSave(saves[c]!);
+    for (;;) {
+      const local = listSaves();
+      const server = await listServerSaves();
+      const store = await this.chooseStore('Spielstand laden', local, server, true);
+      if (!store) break;
+      const saves = store === 'server' ? server! : local;
+      const c = await choose(this.desktop.layer, this.assets, this.fonts.small, 'Spielstand laden', saves.map((s, i) => ({ text: this.slotLabel(s, i), enabled: !!s })));
+      if (c < 0 || !saves[c]) { if (server) continue; break; }
+      const save = store === 'server' ? await readServerSave(c) : local[c];
+      if (save) return this.loadSave(save);
+      await this.message('Laden', 'Der Spielstand konnte nicht vom Server geladen werden.');
+    }
+    if (!inGame) await this.diskMenu();
   }
 
   async loadSave(s: SaveGame) {
@@ -463,6 +491,7 @@ export class App {
         `Musiklautstärke: ${Math.round(st.musicVolume * 7)}`,
         `Kampflautstärke: ${Math.round(st.fightVolume * 7)}`,
         `Oberfläche: ${{ auto: 'Automatisch', mobile: 'Handy', desktop: 'Desktop' }[st.uiMode]}`,
+        { text: `Version ${__APP_VERSION__}`, enabled: false },
       ]);
       if (c < 0) break;
       if (c === 1) st.fightMode = st.fightMode === '3d' ? 'fast' : '3d';

@@ -29,6 +29,10 @@ Die importierten Daten liegen in `app\gamedata`.
 Die beiden ISO-Images in den Ordner `iso` legen (oder `BI3_ISO_DIR=/pfad` setzen), dann `docker compose up -d --build` und
 http://localhost:8080 öffnen (anderer Port: `BI3_PORT=9000`). Das Image (`node:24-alpine` mit FFmpeg) führt beim ersten Aufruf die Einrichtung aus;
 die Daten landen im Volume `./gamedata` und bleiben bei Updates erhalten. Die Images werden danach nicht mehr gebraucht.
+Spielstände, die im Spiel unter „Server“ gespeichert werden, liegen in `./saves` (portable: Ordner `saves`; Vite-Dev-Server: `saves/`
+im Projekt, API in `tools/portable/saves.mjs`). Die App-Dateien (`app`, `import`, `server.mjs`, `saves.mjs`) bindet `docker-compose.yml`
+aus dem Paketordner ein: Für ein Update die neue ZIP-Datei darüber entpacken, dann reicht `docker compose restart`
+(`docker compose up -d --build` geht ebenso). Die laufende Version steht im Setup-Menü ganz unten.
 
 ## Stand der Prüfung
 

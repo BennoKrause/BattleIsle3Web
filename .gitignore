@@ -25,3 +25,4 @@ extracted/
 *.exe
 *.dll
 test-results*/
+saves/

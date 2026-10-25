@@ -72,14 +72,53 @@ export function writeSave(slot: number, save: SaveGame): boolean {
   }
 }
 
-/** Autosave alternates between slots 8 and 9 (= "Position 9 oder 10"). */
+/** Autosave alternates between slots 8 and 9 (= "Position 9 oder 10"); also on the server when it stores save games. */
 export function autosave(save: SaveGame) {
   let next = 8;
   try {
     next = localStorage.getItem('bi3.autosave.last') === '8' ? 9 : 8;
     localStorage.setItem('bi3.autosave.last', String(next));
   } catch { /* ignore */ }
-  writeSave(next, { ...save, label: `Autosave ${save.label}` });
+  const s = { ...save, label: `Autosave ${save.label}` };
+  writeSave(next, s);
+  if (serverAvailable) void writeServerSave(next, s);
+}
+
+// ------------------------------------------------------------------ save games on the server (tools/portable/saves.mjs)
+/** What the server lists per slot; the complete save game is fetched on loading. */
+export type SaveInfo = Pick<SaveGame, 'label' | 'savedAt' | 'mode' | 'setId' | 'fileId'>;
+
+let serverAvailable = false;
+
+/** Slots on the server, or null when the server does not store save games (e.g. a plain static web server). */
+export async function listServerSaves(): Promise<(SaveInfo | null)[] | null> {
+  try {
+    const r = await fetch('/__saves', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+    const list = r.ok && r.headers.get('Content-Type')?.includes('json') ? await r.json() : null;
+    serverAvailable = Array.isArray(list);
+    return serverAvailable ? Array.from({ length: SAVE_SLOTS }, (_, i) => list[i] ?? null) : null;
+  } catch {
+    serverAvailable = false;
+    return null;
+  }
+}
+
+export async function readServerSave(slot: number): Promise<SaveGame | null> {
+  try {
+    const r = await fetch(`/__saves/${slot}`, { cache: 'no-store' });
+    return r.ok ? ((await r.json()) as SaveGame) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeServerSave(slot: number, save: SaveGame): Promise<boolean> {
+  try {
+    const r = await fetch(`/__saves/${slot}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(save) });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Seen video sequences for the video recorder of the campaign. */

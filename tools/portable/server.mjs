@@ -13,23 +13,26 @@
 //
 //   --lan          listen on all network interfaces (play on a phone in the same Wi-Fi), default: this computer only
 //   --strict-case  file names must match upper/lower case exactly, like on Linux (used for tests)
+//   --saves <dir>  folder for the save games stored on the server (BI3_SAVES), default: "saves" next to this file
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { savesApi } from './saves.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
 const opt = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 // positional arguments = CD images / folders (everything that is not an option or the value of one)
-const valueOptions = new Set(['--port', '--data', '--iso-dir', '--ffmpeg', '--jobs', '--cd1', '--cd2']);
+const valueOptions = new Set(['--port', '--data', '--iso-dir', '--ffmpeg', '--jobs', '--cd1', '--cd2', '--saves']);
 const positional = args.filter((a, i) => !a.startsWith('--') && !valueOptions.has(args[i - 1] ?? ''));
 
 const root = resolve(here, 'app');
 const dataDir = resolve(opt('data', process.env.BI3_DATA ?? join(root, 'gamedata')));
+const savesDir = resolve(opt('saves', process.env.BI3_SAVES ?? join(here, 'saves')));
 const host = flag('lan') ? '0.0.0.0' : '127.0.0.1';
 const strict = flag('strict-case');
 const isReady = () => existsSync(join(dataDir, 'manifest.json'));
@@ -170,6 +173,7 @@ function locateFile(urlPath) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (url.pathname.startsWith('/__setup/')) return setupApi(req, res, url.pathname);
+  if (url.pathname === '/__saves' || url.pathname.startsWith('/__saves/')) return savesApi(savesDir, req, res, url.pathname);
   // without game data the entry page is the setup page
   if (!isReady() && (url.pathname === '/' || url.pathname === '/index.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });

@@ -50,7 +50,7 @@ if (withData && !existsSync(join(gamedata, 'manifest.json'))) throw new Error('-
 /** Server, importer and the built game: the part both packages share. */
 function copyCommon(out: string) {
   cpSync(web, join(out, 'app'), { recursive: true });
-  cpSync(join(root, 'tools/portable/server.mjs'), join(out, 'server.mjs'));
+  for (const f of ['server.mjs', 'saves.mjs']) cpSync(join(root, 'tools/portable', f), join(out, f));
   // the importer is plain TypeScript without dependencies; Node runs it directly (type stripping)
   mkdirSync(join(out, 'import'), { recursive: true });
   for (const f of ['importer.ts', 'iso9660.ts']) cpSync(join(root, 'tools/lib', f), join(out, 'import', f));
@@ -71,10 +71,11 @@ function buildDocker() {
     '# FFmpeg converts the videos of the original CDs during the first start',
     'RUN apk add --no-cache ffmpeg',
     'WORKDIR /srv',
-    'COPY server.mjs ./',
+    '# docker-compose.yml mounts these from the package folder, so an unpacked update takes effect with a restart',
+    'COPY server.mjs saves.mjs ./',
     'COPY import/ ./import/',
     'COPY app/ ./app/',
-    'ENV BI3_DATA=/data BI3_ISO_DIR=/iso',
+    'ENV BI3_DATA=/data BI3_ISO_DIR=/iso BI3_SAVES=/saves',
     'EXPOSE 8080',
     '# without game data in /data the server imports the .iso images found in /iso, then serves the game',
     'CMD ["node", "server.mjs", "--lan", "--no-browser", "--port", "8080"]',
@@ -91,12 +92,20 @@ function buildDocker() {
     '    volumes:',
     '      # imported game data (created by the first start, survives container updates)',
     '      - ./gamedata:/data',
+    '      # save games stored on the server (menu "Spiel speichern" -> Server)',
+    '      - ./saves:/saves',
     '      # the two original CD images (.iso); only read during the first start',
     '      - ${BI3_ISO_DIR:-./iso}:/iso:ro',
+    '      # the game itself from this folder: unpack a new version over it and "docker compose restart" is enough',
+    '      - ./app:/srv/app:ro',
+    '      - ./import:/srv/import:ro',
+    '      - ./server.mjs:/srv/server.mjs:ro',
+    '      - ./saves.mjs:/srv/saves.mjs:ro',
     '    restart: unless-stopped',
     '',
   ].join('\n'));
-  writeFileSync(join(out, '.dockerignore'), 'gamedata\niso\n');
+  mkdirSync(join(out, 'saves'), { recursive: true });
+  writeFileSync(join(out, '.dockerignore'), 'gamedata\niso\nsaves\n');
   writeFileSync(join(out, 'README.txt'), crlf([
     'Battle Isle 3 - Schatten des Imperators (Docker)',
     '',
@@ -108,6 +117,9 @@ function buildDocker() {
     '     übernommen und die Videos umgewandelt, ca. 1-5 Minuten. Danach startet das Spiel.',
     '',
     'Weitere Starts: docker compose up -d   (die Images werden nicht mehr gebraucht, die Daten liegen im Ordner "gamedata").',
+    'Update: die neue ZIP-Datei über diesen Ordner entpacken, dann  docker compose up -d --build  (oder docker compose restart).',
+    '        Ein schon geöffnetes Spiel im Browser einmal neu laden. Die installierte Version steht im Menü Setup ganz unten.',
+    'Spielstände: beim Speichern "Browser" (nur dieses Gerät) oder "Server" (Ordner "saves", von jedem Gerät aus ladbar) wählen.',
     'Beenden: docker compose down. Anderer Port: BI3_PORT=9000 docker compose up -d',
     'Neu einrichten: Ordner "gamedata" leeren und den Container neu starten.',
     '',
@@ -152,7 +164,8 @@ function buildPortable() {
     '          Windows fragt dabei einmalig nach der Firewall-Freigabe.',
     '',
     'Es muss nichts installiert werden: node.exe (Laufzeit) und ffmpeg\\ffmpeg.exe (Videoumwandlung) liegen in diesem Ordner.',
-    'Der Ordner kann verschoben oder auf einen USB-Stick kopiert werden. Gespeichert wird im Browser (Einstellungen, Spielstände).',
+    'Der Ordner kann verschoben oder auf einen USB-Stick kopiert werden. Einstellungen speichert der Browser; Spielstände wahlweise',
+    'der Browser (nur dieses Gerät) oder der Server (Ordner "saves", auch vom Handy aus ladbar).',
     'Neu einrichten: Ordner app\\gamedata löschen und BattleIsle3.bat erneut mit den ISO-Images starten.',
     'Die Spieldaten (app\\gamedata) stammen aus Ihren eigenen Original-CDs und sind urheberrechtlich geschützt: nicht weitergeben.',
     'FFmpeg ist freie Software (GPL, https://ffmpeg.org); der Quelltext ist dort erhältlich.',
