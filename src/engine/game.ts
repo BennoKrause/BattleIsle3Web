@@ -372,8 +372,10 @@ export class Game {
     return r;
   }
 
+  /** FUN_004407c6: the units on board lose as many as their transporter, before it (FUN_0043739e, recursively). */
   private damage(u: UnitState, losses: number, by: number) {
     if (losses <= 0 || !u.alive) return;
+    for (const id of [...u.cargo]) this.damage(this.s.units[id], losses, by);
     u.group -= losses;
     if (u.group < 1) this.destroyUnit(u, by, 'damage');
   }

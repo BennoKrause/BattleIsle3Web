@@ -106,4 +106,28 @@ describe.skipIf(!hasGameData)('transporters', () => {
     g.destroyUnit(carrier, 1, 'damage');
     expect(passenger.alive).toBe(false);
   });
+
+  it('units on board lose as many as their transporter when it is hit (FUN_004407c6 -> FUN_0043739e)', async () => {
+    const { g, state, data, carrier, passenger } = await setup();
+    g.moveUnit(passenger.id, field(g, carrier));
+    // the loaded transporter changes sides; an own unit next to it with a weapon against it attacks
+    const enemy = state.players.findIndex((p, i) => i !== 0 && p.alive && !g.w.isAllied(0, i));
+    carrier.owner = enemy; passenger.owner = enemy;
+    const attacker = g.w.neighbours(carrier.x, carrier.y).map((p) => p && g.w.unitAt(p.x, p.y)).find((u) => u && u.owner === 0)!;
+    const startCarrier = carrier.group, startPassenger = passenger.group;
+    let found = false;
+    for (const c of data.unitClasses) {
+      attacker.type = c.index; attacker.group = c.strength; attacker.ammo = c.weapons.map((w) => w.ammo); attacker.flags = 0;
+      if (!g.attackTargets(attacker.id).some((t) => t.unitId === carrier.id)) continue;
+      for (let i = 0; i < 30 && carrier.group === startCarrier && carrier.alive; i++) {
+        attacker.flags = 0; attacker.group = c.strength; attacker.ammo = c.weapons.map((w) => w.ammo);
+        g.attack(attacker.id, carrier.id);
+      }
+      if (carrier.group !== startCarrier || !carrier.alive) { found = true; break; }
+    }
+    expect(found).toBe(true);
+    const losses = startCarrier - carrier.group;
+    expect(passenger.group).toBe(Math.max(0, startPassenger - losses));
+    expect(passenger.alive).toBe(startPassenger - losses > 0 && carrier.alive);
+  });
 });
