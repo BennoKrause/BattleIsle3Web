@@ -73,19 +73,33 @@ function containerEnterable(w: World, u: UnitState, x: number, y: number): boole
   return !!shop && shopEntrySlot(w, shop, u) >= 0;
 }
 
-/** FUN_0043e34f: may the unit end its move on this field? */
+/** Picking up (FUN_0043e34f): a vehicle with class flags 0x110 on normal height whose stealth mask matches the unit. */
+export function canPickUpKind(w: World, u: UnitState, other: UnitState): boolean {
+  const uc = w.cls(u), oc = w.cls(other);
+  return (uc.flags & 0x110) !== 0 && (oc.stealthMask2 & uc.stealthMask) !== 0 && u.layer !== Layer.SUBMERGED && u.layer !== Layer.HIGH_AIR;
+}
+
+/** May `u` pick up `other` (crystal, mine)? Own, neutral or (class flag 0x04000000) foreign units (FUN_0043e34f). */
+export function canPickUp(w: World, u: UnitState, other: UnitState): boolean {
+  const uc = w.cls(u);
+  return canPickUpKind(w, u, other) && canLoad(w, u, other)
+    && (other.owner === NEUTRAL || other.owner === u.owner || ((uc.flags >>> 26) & 1) === 1);
+}
+
+/** May `u` board the transporter `carrier`? Only an own transporter on normal height (FUN_0043e34f). */
+export function canBoard(w: World, carrier: UnitState, u: UnitState): boolean {
+  return carrier.owner === u.owner && canLoad(w, carrier, u) && carrier.layer !== Layer.SUBMERGED && carrier.layer !== Layer.HIGH_AIR;
+}
+
+/** FUN_0043e34f: may the unit end its move on this field? A vehicle able to pick up the unit there only picks it up;
+ *  otherwise the unit may board an own transporter. */
 export function canStopOn(w: World, u: UnitState, x: number, y: number): boolean {
   const other = w.unitAt(x, y);
   const shop = w.shopAt(x, y);
   if (!other) return shop ? shopEntrySlot(w, shop, u) >= 0 : true;
   if (other.id === u.id) return false;
-  // own transporter that can take the unit (not while submerged/high)
-  if (canLoad(w, other, u) && other.layer !== Layer.SUBMERGED && other.layer !== Layer.HIGH_AIR) return true;
-  // picking up crystals / mines with a suitable transporter on the ground
-  const uc = w.cls(u), oc = w.cls(other);
-  if ((uc.flags & 0x110) && (oc.stealthMask2 & uc.stealthMask) && u.layer !== Layer.SUBMERGED && u.layer !== Layer.HIGH_AIR
-    && (other.owner === NEUTRAL || other.owner === u.owner || ((uc.flags >>> 26) & 1)) && canLoad(w, u, other)) return true;
-  return false;
+  if (canPickUpKind(w, u, other)) return canPickUp(w, u, other);
+  return canBoard(w, other, u);
 }
 
 export interface MoveArea {

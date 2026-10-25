@@ -431,7 +431,7 @@ export class GameScreen {
     if (this.mode.kind === 'move') { this.mode = { kind: 'none' }; this.closeChip(); }
     const uid = s.unitAt[f];
     const shopId = s.shopAt[f];
-    if (uid >= 0 && s.units[uid].owner === s.activePlayer && !(s.units[uid].flags & UnitFlag.DONE)) {
+    if (uid >= 0 && s.units[uid].owner === s.activePlayer && (!(s.units[uid].flags & UnitFlag.DONE) || this.cargoCanLeave(s.units[uid]))) {
       this.selected = uid;
       if (double || true) this.openChip(uid);
     } else if (shopId >= 0 && (double || uid < 0) && s.shops[shopId].owner === s.activePlayer) {
@@ -597,8 +597,14 @@ export class GameScreen {
     await this.playEvents(res.events);
     this.busy = false;
     const u = g.state.units[unitId];
-    if (u.alive && !(u.flags & UnitFlag.DONE) && !u.container) this.openChip(unitId);
+    if (u.alive && !u.container && (!(u.flags & UnitFlag.DONE) || this.cargoCanLeave(u))) this.openChip(unitId);
     this.afterHumanAction();
+  }
+
+  /** A transporter that has finished may still be opened while a unit on board can leave (FUN_00442f96 checks only
+   *  the unit on board, not the transporter). */
+  private cargoCanLeave(u: UnitState) {
+    return u.cargo.some((id) => this.game.canMove(this.game.state.units[id]));
   }
 
   private async chooseWeaponAndAttack(unitId: number, targetId: number) {

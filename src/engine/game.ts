@@ -5,7 +5,7 @@ import type { GameData } from '../data/gamedata.ts';
 import { SF, World, shopFunction } from './world.ts';
 import { RF } from './rules.ts';
 import { UCF } from './classes.ts';
-import { computeMoveArea, pathTo, shopEntrySlot, canLoad, type MoveArea } from './movement.ts';
+import { computeMoveArea, pathTo, shopEntrySlot, canBoard, canPickUp, canPickUpKind, type MoveArea } from './movement.ts';
 import { updateVision, updateVisionAll, unitVisibleTo } from './vision.ts';
 import { resolveCombat, usableWeapons, bestWeapon, type CombatResult } from './combat.ts';
 import { toCombatant } from './combatant.ts';
@@ -171,10 +171,18 @@ export class Game {
       const shop = s.shops[shopId];
       if (shop.owner !== u.owner) this.captureShop(shop.id, u);
       if (u.alive) this.enterShop(u, shop.id);
-    } else if (other && canLoad(w, other, u)) {
+    } else if (other && !canPickUpKind(w, u, other) && canBoard(w, other, u)) {
       other.cargo.push(u.id);
       u.container = { kind: 'unit', id: other.id };
-    } else if (other && canLoad(w, u, other)) {
+      // a loaded transporter hands its cargo over to the free places of the other one (FUN_004425fd)
+      for (const id of [...u.cargo]) {
+        if (other.cargo.length >= 8) break;
+        const cu = s.units[id];
+        u.cargo = u.cargo.filter((x) => x !== id);
+        other.cargo.push(id);
+        cu.container = { kind: 'unit', id: other.id };
+      }
+    } else if (other && canPickUp(w, u, other)) {
       // picks up a crystal or mine
       s.unitAt[target] = u.id;
       other.container = { kind: 'unit', id: u.id };
@@ -185,8 +193,8 @@ export class Game {
       if (u.layer === Layer.GROUND || u.layer === Layer.WATER) u.layer = w.isOpenWater(tx, ty) ? Layer.WATER : Layer.GROUND;
     }
     updateVision(w, u.owner);
-    // ambush by hidden neighbours (FUN_004436b5)
-    if (!u.container) this.ambush(u);
+    // ambush by hidden neighbours (FUN_004436b5), also after entering a building or a transporter
+    this.ambush(u);
     // after the move the chip window still offers attacking and diving / climbing (manual p. 58)
     if (u.alive && (u.container || retreating || (!this.hasAttackTargets(u) && !canChangeHeight(this.w, u, true) && !canChangeHeight(this.w, u, false)))) this.unitDone(u);
     updateVisionAll(w);

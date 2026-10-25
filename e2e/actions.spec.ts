@@ -80,3 +80,29 @@ test('a reconnaissance plane climbs to high altitude', async ({ page }) => {
   await expect.poll(() => page.evaluate((id) => (window as any).bi3app.running.game.state.units[id].layer, info.id)).toBe(0);
   expect(errors).toEqual([]);
 });
+
+test('after moving a transporter its cargo can still be unloaded', async ({ page }) => {
+  const errors: string[] = [];
+  await openMission(page, 103, errors);
+  const info = await page.evaluate(() => {
+    const app = (window as any).bi3app, g = app.running.game, s = g.state;
+    const t = g.unitsOf(0).find((u: any) => !u.container && u.cargo.length && g.canMove(u))!;
+    // a free field on the coast: one of its neighbours is land the cargo may drive on
+    const cargoCls = g.w.cls(s.units[t.cargo[0]]);
+    const coast = (f: number) => g.w.neighbours(f % s.width, Math.trunc(f / s.width)).some((p: any) => p && s.unitAt[p.y * s.width + p.x] < 0 && s.shopAt[p.y * s.width + p.x] < 0
+      && ((cargoCls.terrainMask >>> 0) & g.w.groundMask(p.x, p.y)) !== 0 && g.w.playable(p.x, p.y));
+    const to = [...g.moveArea(t.id).targets.keys()].find((f: any) => s.unitAt[f] < 0 && s.shopAt[f] < 0 && coast(f)) as number;
+    g.moveUnit(t.id, to);
+    app.renderer.centerOn(s, t.x, t.y);
+    app.running.screen.dirty = true;
+    return { id: t.id, done: !!(t.flags & 16), cargo: t.cargo[0], pos: app.running.screen.fieldToClient(g.w.idx(t.x, t.y)) };
+  });
+  await page.waitForTimeout(300);
+  await page.mouse.click(info.pos.x, info.pos.y);
+  await page.locator('.chipwin [data-cmd="Transporter"]').click();
+  await page.locator(`.cargowin [data-unit="${info.cargo}"]`).click();
+  const mode = await page.evaluate(() => { const m = (window as any).bi3app.running.screen.mode; return { kind: m.kind, fields: m.area?.size ?? 0 }; });
+  expect(mode.kind).toBe('move');
+  expect(mode.fields).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
