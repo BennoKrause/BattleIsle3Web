@@ -109,18 +109,25 @@ export function updateVisionAll(w: World) {
   for (const p of w.state.players) if (p.alive) updateVision(w, p.index);
 }
 
-/** Is a unit visible to `player`? Enemy units only on watched fields; submerged enemies only next to own units. */
+/**
+ * Is a unit drawn for `player`? Enemy units only on watched fields; submerged enemy submarines are never drawn
+ * (SDI_1C.EXE WMP_DrawField; manual: "Getauchte feindliche U-Boote sind nicht sichtbar"), except with the cheat.
+ */
 export function unitVisibleTo(w: World, player: number, unitId: number): boolean {
+  const u = w.state.units[unitId];
+  if (!unitOnSeenField(w, player, unitId)) return false;
+  if (u.owner === player || w.isAllied(player, u.owner)) return true;
+  if (u.layer === 4 /* submerged */ && !w.state.cheatSubmarinesVisible) return false;
+  return true;
+}
+
+/**
+ * Is the unit on a field `player` watches (field flag 0x40)? Attack targets are chosen by this (ATT_ListTargets),
+ * so a hidden submarine on a watched field can still be attacked by weapons that hit submerged units.
+ */
+export function unitOnSeenField(w: World, player: number, unitId: number): boolean {
   const u = w.state.units[unitId];
   if (!u.alive || u.container) return false;
   if (u.owner === player || w.isAllied(player, u.owner)) return true;
-  const i = w.idx(u.x, u.y);
-  if ((w.state.vision[i] & (1 << player)) === 0) return false;
-  if (u.layer === 4 /* submerged */) {
-    return w.neighbours(u.x, u.y).some((p) => {
-      const o = p && w.unitAt(p.x, p.y);
-      return !!o && w.isAllied(player, o.owner);
-    });
-  }
-  return true;
+  return (w.state.vision[w.idx(u.x, u.y)] & (1 << player)) !== 0;
 }

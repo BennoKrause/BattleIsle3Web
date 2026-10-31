@@ -13,6 +13,8 @@ import type { GameEvent, GameState, UnitState } from '../engine/state.ts';
 import { parseLib } from '../formats/lib.ts';
 import type { CombatResult } from '../engine/combat.ts';
 import { showFightPanel, type FightPanelInput, type FightSide } from './fightpanel.ts';
+import { StatisticsWindow, STAT_W, STAT_H } from './statisticswindow.ts';
+import { CHEAT_ITEMS, CheatWatcher, applyCheatMenu, setAlliedComputers } from '../engine/cheats.ts';
 import { showFightWindow } from './fightwindow.ts';
 import { UiaWindow, type UiaTarget } from './uiawindow.ts';
 import { MobileUi, type CardAction, type UnitStats } from './mobile/mobileui.ts';
@@ -35,6 +37,8 @@ export interface ScreenHooks {
   showText(title: string, text: string): Promise<void>;
   /** Ja/Nein requester (SDI_1C.EXE RQ_Requester with flag 3); resolves true for "Ja". */
   confirm(text: string): Promise<boolean>;
+  /** Menu with entries (MNU_OpenMenu); -1 when left with the exit button. */
+  menu(title: string, entries: string[]): Promise<number>;
   /** Text input requester (RQ_InputRequester); null when cancelled. */
   prompt(title: string): Promise<string | null>;
   openDiskMenu(): void;
@@ -56,6 +60,8 @@ export interface ScreenContext {
   playerNames: string[];
   shopNames: Map<number, string>;
   missionName: string;
+  /** Level code of the map (statistics tab "Kartendaten"). */
+  missionPassword?: number;
   src: FileSource;
   /** 3D fight (optional: without it only the statistics window is shown). */
   fight?: { enabled(): boolean; atEndOfRound?(): boolean; load(): Promise<FightAssets>; fx: FxPlayer };
@@ -112,6 +118,7 @@ export class GameScreen {
     else this.buildDesktop();
     try {
       ctx.renderer.setExplosionFrames(Array.from({ length: 8 }, (_, i) => ctx.assets.canvas('EXPLO000', `EX00_0${i}`)));
+      ctx.renderer.setCursorFrames([1, 2, 3].map((z) => [0, 1, 2, 3].map((i) => ctx.assets.canvas('CURS000', `CU0${z}0${i}`))));
     } catch { /* without the library no explosion pictures */ }
     window.addEventListener('keydown', this.onKey);
     // initial view: centre on the human player's HQ or first unit
@@ -296,6 +303,7 @@ export class GameScreen {
       this.dirty = false;
       if (!this.mobile) this.ctx.renderer.renderOverview(this.overview, s, this.viewer, this.ctx.chroma);
       this.updateInfo();
+      if (this.statWin && !this.frozen) this.statWin.update(this.game.state, this.viewer);
     }
   };
 
@@ -382,8 +390,13 @@ export class GameScreen {
     return this.ctx.renderer.fieldAt(this.game.state, (e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale);
   }
 
+  private cheats = new CheatWatcher();
   private onKey = (e: KeyboardEvent) => {
     if (document.querySelector('.video-full, .video-framed, .menu, .msgbox')) return;
+    // hidden cheats of the original (w_sdi_cheat.c): "ewald" + F9 opens the cheat menu, "BAUER" takes over allied computers
+    const cheat = this.cheats.key(e.key);
+    if (cheat === 'menu' && this.canAct()) { e.preventDefault(); void this.openCheatMenu(); return; }
+    if (cheat === 'bauer') { setAlliedComputers(this.game, true); this.dirty = true; }
     const r = this.ctx.renderer;
     const step = 48;
     if (e.key === 'ArrowLeft') r.scrollX -= step;
@@ -903,6 +916,23 @@ export class GameScreen {
     if (this.mobile && this.selected === unitId) this.openMobileCard(unitId);
   }
 
+  /** CHT_CheatMenu: nine items, each chosen entry cycles its value; leaving the menu applies them. */
+  private async openCheatMenu() {
+    const values = CHEAT_ITEMS.map(() => 0);
+    values[3] = this.game.state.cheatSubmarinesVisible ? 1 : 0;
+    values[6] = this.game.state.cheatSkipComputer ? 1 : 0;
+    this.busy = true;
+    for (;;) {
+      const c = await this.hooks.menu('Cheat Menu', CHEAT_ITEMS.map((it, i) => it[values[i]]));
+      if (c < 0) break;
+      values[c] = (values[c] + 1) % CHEAT_ITEMS[c].length;
+    }
+    this.busy = false;
+    applyCheatMenu(this.game, values, this.cursor);
+    this.dirty = true;
+    this.afterHumanAction();
+  }
+
   /** Text n of TEXT000.TXT (the requester texts of the original), "|" as line break. */
   private uiText(n: number, fallback: string) {
     return (this.game.data.uiTexts[n] ?? fallback).replace(/\|/g, '\n');
@@ -914,6 +944,12 @@ export class GameScreen {
     let computerMoved = false;
     while (!g.state.outcome && !g.isHumanTurn() && !this.destroyed) {
       this.busy = true;
+      // cheat "Computer aus": the computer players do not move (main mode 0xc80 with DAT_004c8e84)
+      if (g.state.cheatSkipComputer) {
+        await this.playComputerEvents(g.endTurn().events);
+        computerMoved = true;
+        continue;
+      }
       // computer move like the original (w_computer.c): the map stands still, no moves or fights are shown; only the
       // statistics window with the progress bar is updated after every command
       const ai = new OriginalAI(g);
@@ -1123,11 +1159,36 @@ export class GameScreen {
     if (uid >= 0 && this.game.visibleTo(this.viewer, uid)) this.uia.setTarget(this.uiaTarget(uid));
   }
 
+  /** Statistics window (w_statistik.c): desktop window at the lower right, on phones a sheet with the scaled window. */
+  private statWin: StatisticsWindow | null = null;
   private showStatistics() {
-    const g = this.game, s = g.state;
-    const lines = s.players.filter((p) => p.alive || p.lost).map((p) => `${this.ctx.playerNames[p.index] || `Spieler ${p.index + 1}`}: ${g.unitsOf(p.index).length} Einheiten, vernichtet ${p.killed}, verloren ${p.lost}, Energie ${p.energy}`);
-    if (this.mobile) { this.mobile.openMessage(`${this.ctx.missionName} – Runde ${s.turn + 1}`, lines); return; }
-    void this.hooks.showText(`${this.ctx.missionName} – Runde ${s.turn + 1}`, lines.join('\n'));
+    const s = this.game.state;
+    if (this.statWin) { this.statWin.el.remove(); this.statWin = null; if (!this.mobile) return; }
+    const deps = {
+      assets: this.ctx.assets, fonts: this.ctx.fonts, chroma: this.ctx.chroma, classes: this.game.data.unitClasses,
+      missionName: this.ctx.missionName, password: this.ctx.missionPassword ?? 0,
+      centerOn: (f: number) => { this.ctx.renderer.centerOn(s, f % s.width, Math.trunc(f / s.width)); this.cursor = f; this.dirty = true; },
+      onClose: () => { this.statWin?.el.remove(); this.statWin = null; if (this.mobile) this.mobile.closeSheet(); },
+    };
+    if (this.mobile) {
+      const { body } = this.mobile.sheet('Statistik', 'm-stats', () => { this.statWin = null; });
+      const holder = el('div', 'm-stat-holder', body);
+      const win = new StatisticsWindow(holder, deps);
+      win.el.style.position = 'relative';
+      const fit = () => {
+        const k = Math.max(1, Math.floor((holder.clientWidth / STAT_W) * 4) / 4);
+        win.el.style.transform = `scale(${k})`;
+        win.el.style.transformOrigin = '0 0';
+        holder.style.height = `${STAT_H * k}px`;
+      };
+      requestAnimationFrame(fit);
+      this.statWin = win;
+    } else {
+      // STAT_Init: 272x200 at the lower right of the screen (20 pixels from the right, 60 from the bottom)
+      this.statWin = new StatisticsWindow(this.ctx.desktop.layer, deps);
+      Object.assign(this.statWin.el.style, { left: `${DESKTOP_W - STAT_W - 20}px`, top: `${DESKTOP_H - STAT_H - 60}px`, zIndex: '4400' });
+    }
+    this.statWin.update(s, this.viewer);
   }
 
   // ------------------------------------------------------------------ buildings and transporters

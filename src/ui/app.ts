@@ -5,7 +5,7 @@ import { loadGameData, type GameData } from '../data/gamedata.ts';
 import type { CampaignMission, CampaignSet } from '../formats/campaign.ts';
 import { textTable } from '../formats/text.ts';
 import { createGame } from '../engine/setup.ts';
-import { Difficulty, RF } from '../engine/rules.ts';
+import { Difficulty } from '../engine/rules.ts';
 import { Game } from '../engine/game.ts';
 import type { GameState } from '../engine/state.ts';
 import { adaptComputerUnits, earnTrainingPoints, newCampaign, transferUnitsIntoPool, transferUnitsOntoMap, type CampaignProgress } from '../engine/campaign.ts';
@@ -27,7 +27,7 @@ import { parseMidi, type MidiSong } from '../audio/midi.ts';
 import { DEFAULT_CHROMA, parseChroma } from '../render/chroma.ts';
 import { autosave, listSaves, listServerSaves, loadSettings, readServerSave, rememberSequence, saveSettings, seenSequences, writeSave, writeServerSave, type SaveGame, type SaveInfo, type Settings } from './storage.ts';
 
-const UI_LIBS = ['BKGD000', 'CSTA000', 'EXPLO000', 'MNGR000', 'FRMS000', 'CMSK000', 'CMFRM000', 'SETUP000', 'SI000', 'SP000', 'ST000', 'WW000', 'UW000', 'CA000', 'MA000', 'CURS000', 'FF000', 'UI000', 'UI001', 'WB000'];
+const UI_LIBS = ['BKGD000', 'CSTA000', 'SK000', 'EXPLO000', 'MNGR000', 'FRMS000', 'CMSK000', 'CMFRM000', 'SETUP000', 'SI000', 'SP000', 'ST000', 'WW000', 'UW000', 'CA000', 'MA000', 'CURS000', 'FF000', 'UI000', 'UI001', 'WB000'];
 const INTRO = [980, 981, 982];
 const CREDITS = 997;
 
@@ -256,10 +256,14 @@ export class App {
     await this.openGame({ game, set, mission, campaign: c }, !resume);
   }
 
+  /**
+   * Setup options for the game: every player starts with the current settings (WMG_ResetPlayerSettings); in hot-seat
+   * games each player then keeps his own (changing them in the setup affects the active player only).
+   */
   private applySettingsToGame(game: Game) {
-    game.options.attackAllies = this.settings.attackAllies;
-    if (this.settings.autoRefuel) game.state.ruleFlags |= RF.AUTO_REFUEL | RF.AUTO_REPAIR;
-    else game.state.ruleFlags &= ~(RF.AUTO_REFUEL | RF.AUTO_REPAIR);
+    const rules = { attackAllies: this.settings.attackAllies, autoRefuel: this.settings.autoRefuel };
+    game.state.playerRules ??= game.state.players.map(() => ({ ...rules }));
+    game.applyPlayerRules(game.state.activePlayer);
   }
 
   private async openGame(r: Omit<Running, 'screen'>, fresh: boolean) {
@@ -270,13 +274,14 @@ export class App {
     const playerNames = [...(mission.playerNames ?? [])];
     const screen = new GameScreen(game, {
       assets: this.assets, fonts: this.fonts, desktop: this.desktop, renderer: this.renderer, chroma,
-      playerNames, shopNames, missionName: mission.name ?? `MISS${mission.fileId}`,
+      playerNames, shopNames, missionName: mission.name ?? `MISS${mission.fileId}`, missionPassword: mission.password,
       src: this.data.source,
       fight: { enabled: () => this.settings.fightMode === '3d', atEndOfRound: () => this.settings.fightMode === 'end', load: () => (this.fightAssets ??= FightAssets.load(this.data.source)), fx: this.fx },
     }, {
       playSequence: (seq) => this.playSequence(set, seq),
       showText: (t, x) => this.message(t, x),
       prompt: (title) => this.prompt(title, { maxLength: 16 }),
+      menu: (title, entries) => choose(this.desktop.layer, this.assets, this.fonts.small, title, entries, true),
       confirm: async (text) => (await choose(this.desktop.layer, this.assets, this.fonts.small, text, ['Ja', 'Nein'], false)) === 0,
       openDiskMenu: () => void this.inGameDiskMenu(),
       openSetup: () => void this.setupMenu(),
@@ -494,6 +499,9 @@ export class App {
   async setupMenu() {
     for (;;) {
       const st = this.settings;
+      // in a running game the setup shows the rule options of the active player
+      const own = this.running?.game.state.playerRules?.[this.running.game.state.activePlayer];
+      if (own) { st.attackAllies = own.attackAllies; st.autoRefuel = own.autoRefuel; }
       const zoomName = st.zoom === 1 ? 'Kleine Hexfelder' : st.zoom === 1.5 ? 'Mittelgroße Hexfelder' : 'Große Hexfelder';
       const c = await choose(this.desktop.layer, this.assets, this.fonts.small, 'SETUP', [
         zoomName,
@@ -515,6 +523,9 @@ export class App {
       if (c === 2) st.videoVolume = st.videoVolume >= 1 ? 0 : Math.min(1, st.videoVolume + 1 / 7);
       if (c === 3) st.attackAllies = !st.attackAllies;
       if (c === 4) st.autoRefuel = !st.autoRefuel;
+      // the two rule options belong to the active player (per-player settings of the original)
+      const pr = this.running?.game.state.playerRules;
+      if ((c === 3 || c === 4) && pr && this.running) pr[this.running.game.state.activePlayer] = { attackAllies: st.attackAllies, autoRefuel: st.autoRefuel };
       if (c === 5) st.aiSpeed = st.aiSpeed >= 2 ? 0.5 : st.aiSpeed * 2;
       if (c === 6) st.language = st.language === 'GER' ? 'ENG' : 'GER';
       if (c === 7) st.music = (st.music + 1) % 3;

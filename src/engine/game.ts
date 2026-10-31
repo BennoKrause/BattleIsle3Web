@@ -6,7 +6,7 @@ import { SF, World, shopFunction } from './world.ts';
 import { RF } from './rules.ts';
 import { UCF } from './classes.ts';
 import { computeMoveArea, pathTo, shopEntrySlot, canBoard, canPickUp, canPickUpKind, type MoveArea } from './movement.ts';
-import { updateVision, updateVisionAll, unitVisibleTo } from './vision.ts';
+import { updateVision, updateVisionAll, unitVisibleTo, unitOnSeenField } from './vision.ts';
 import { resolveCombat, usableWeapons, bestWeapon, type CombatResult } from './combat.ts';
 import { toCombatant } from './combatant.ts';
 import { distance, directionTo } from './hex.ts';
@@ -70,7 +70,23 @@ export class Game {
     this.s.turn = 0;
     this.s.activePlayer = this.firstAlivePlayer(0);
     this.s.movement = 1;
+    this.recordRoundStatistics();
     this.processEvents();
+  }
+
+  /** STAT_CreateTurnStatistic: unit count and energy production of every player for the curves of the statistics window. */
+  recordRoundStatistics() {
+    const s = this.s;
+    const st = (s.statistics ??= { units: [], energy: [], destroyed: [] });
+    for (let p = 0; p < 7; p++) {
+      const units = s.units.filter((u) => u.alive && u.owner === p).length;
+      const energy = s.shops.filter((sh) => sh.owner === p).reduce((e, sh) => e + sh.energyPlus, 0);
+      (st.units[p] ??= []).push(Math.min(255, units));
+      (st.energy[p] ??= []).push(Math.min(255, energy));
+      // 100 rounds at most: like the original the first 89 values move up by one, value 89 becomes 0 and the
+      // curve continues at index 90 (the last 10 rounds are dropped)
+      if (st.units[p].length > 99) { st.units[p] = [...st.units[p].slice(1, 90), 0]; st.energy[p] = [...st.energy[p].slice(1, 90), 0]; }
+    }
   }
 
   firstAlivePlayer(from: number): number {
@@ -127,7 +143,7 @@ export class Game {
       if (t.owner === u.owner || t.owner >= NEUTRAL && !(this.w.cls(t).flags & UCF.CRYSTAL)) continue;
       // allies only with the setup option "Alliierte angreifen" (manual p. 43)
       if (this.w.isAllied(u.owner, t.owner) && !this.options.attackAllies) continue;
-      if (!unitVisibleTo(this.w, u.owner, t.id)) continue;
+      if (!unitOnSeenField(this.w, u.owner, t.id)) continue;
       const d = distance(u.x, u.y, t.x, t.y);
       let mask = usableWeapons(me, toCombatant(this.w, t));
       c.weapons.forEach((wp, i) => { if (d < Math.max(1, wp.minRange) || d > wp.maxRange) mask &= ~(1 << i); });
@@ -454,7 +470,14 @@ export class Game {
     if (losses <= 0 || !u.alive) return;
     for (const id of [...u.cargo]) this.damage(this.s.units[id], losses, by);
     u.group -= losses;
-    if (u.group < 1) this.destroyUnit(u, by, 'damage');
+    if (u.group < 1) {
+      // STAT_StoreUnitAsDestroyed: units destroyed in a fight appear in the statistics of their owner
+      const st = (this.s.statistics ??= { units: [], energy: [], destroyed: [] });
+      const list = (st.destroyed[u.owner] ??= []);
+      if (list.length < 100) list.push({ type: u.type, experience: u.experience, field: this.w.idx(u.x, u.y), name: u.name });
+      st.lastDestroyed = u.id;
+      this.destroyUnit(u, by, 'damage');
+    }
   }
 
   destroyUnit(u: UnitState, by: number, reason: string) {
@@ -671,21 +694,44 @@ export class Game {
       // multiplayer maps (game type 2): players without units and without a production building drop out, the game
       // ends when fewer than two are left (MCP_CheckMultiPlayerGamePlayers / MCP_MultiPlayerGameCheckEnd)
       if (s.gameType === 2 && this.eliminatePlayers()) return;
+      // STAT_ActivatePlayer: the list of destroyed own units starts anew for the player whose turn ends
+      if (s.statistics) s.statistics.destroyed[s.activePlayer] = [];
       // events of this turn that did not trigger are discarded
       s.actions = s.actions.filter((a) => !(a.turn <= s.turn && (a.playerMask === 0 || lowestBitIndex(a.playerMask) <= s.activePlayer)));
       let p = s.activePlayer;
       for (let i = 0; i < 6; i++) {
         p++;
-        if (p === 6) { p = 0; s.turn++; this.emit('turn', { turn: s.turn }); }
+        if (p === 6) { p = 0; s.turn++; this.emit('turn', { turn: s.turn }); this.recordRoundStatistics(); }
         if (s.players[p].alive) break;
       }
       s.activePlayer = p;
+      this.applyPlayerRules(p);
       this.startPlayerTurn(p);
       s.movement = 1;
       this.processEvents();
       this.checkConditions();
     });
     return { ok: true, events };
+  }
+
+  /** Cheat menu "Mission gewonnen / verloren". */
+  forceOutcome(result: 'victory' | 'defeat') {
+    const s = this.s;
+    if (s.outcome) return;
+    const { events } = this.collect(() => {
+      s.outcome = { result, turn: s.turn, conditions: [] };
+      this.emit(result, { cheat: true });
+    });
+    return events;
+  }
+
+  /** WMG_ApplyPlayerRuleSettings: the setup options of player p (rule bits 0x4000000 and 0x180). */
+  applyPlayerRules(p: number) {
+    const r = this.s.playerRules?.[p];
+    if (!r) return;
+    this.options.attackAllies = r.attackAllies;
+    if (r.autoRefuel) this.s.ruleFlags |= RF.AUTO_REFUEL | RF.AUTO_REPAIR;
+    else this.s.ruleFlags &= ~(RF.AUTO_REFUEL | RF.AUTO_REPAIR);
   }
 
   /** Returns true when the multiplayer game is over (outcome set, winner or nobody). */

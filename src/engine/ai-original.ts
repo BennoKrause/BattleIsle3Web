@@ -7,7 +7,7 @@ import { computeMoveArea } from './movement.ts';
 import { distance, neighbours } from './hex.ts';
 import { usableWeapons } from './combat.ts';
 import { toCombatant } from './combatant.ts';
-import { unitVisibleTo } from './vision.ts';
+import { unitOnSeenField } from './vision.ts';
 import { nextRandom } from './rng.ts';
 import { refillNeed } from './support.ts';
 import { SF, shopFunction, type World } from './world.ts';
@@ -149,7 +149,7 @@ export class OriginalAI {
     for (const t of this.w.unitsOnMap()) {
       if (this.allied(t.owner) || t.owner >= NEUTRAL) continue;
       if (this.cls(t).flags & UCF.CRYSTAL) continue;
-      if (!unitVisibleTo(this.w, this.p, t.id)) continue;
+      if (!unitOnSeenField(this.w, this.p, t.id)) continue;
       const d = this.dist(at, this.field(t));
       if (d < Math.max(1, wp.minRange) || d > wp.maxRange) continue;
       if (usableWeapons(me, toCombatant(this.w, t)) & (1 << i)) out.push(t);
@@ -625,7 +625,7 @@ export class OriginalAI {
     const R = Math.min(30, Math.max(15, (c.moveRange * 6) >> 3));
     const me = toCombatant(this.w, u);
     const enemies = this.w.unitsOnMap().filter((t) => !this.allied(t.owner) && t.owner < NEUTRAL && !(this.cls(t).flags & UCF.CRYSTAL)
-      && unitVisibleTo(this.w, this.p, t.id) && usableWeapons(me, toCombatant(this.w, t)) !== 0 && this.dist(here, this.field(t)) <= R)
+      && unitOnSeenField(this.w, this.p, t.id) && usableWeapons(me, toCombatant(this.w, t)) !== 0 && this.dist(here, this.field(t)) <= R)
       .sort((a, b) => this.dist(here, this.field(a)) - this.dist(here, this.field(b))).slice(0, 6);
     let goal: UnitState | null = null, bestV = -1;
     for (const t of enemies) {

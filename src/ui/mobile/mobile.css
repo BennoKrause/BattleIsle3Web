@@ -223,3 +223,7 @@ body.mobile-ui .m-fight-skip { position: absolute; right: 10px; top: calc(10px +
 
 /* the desktop helpers for flash messages and turn banners are not used on phones */
 body.mobile-ui .flash, body.mobile-ui .turnbanner { display: none; }
+
+/* statistics window scaled into a sheet */
+body.mobile-ui .m-stat-holder { position: relative; overflow: hidden; width: 100%; }
+body.mobile-ui .m-stat-holder .statwin { position: relative; image-rendering: pixelated; }

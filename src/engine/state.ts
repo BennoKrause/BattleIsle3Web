@@ -93,6 +93,8 @@ export interface PlayerState {
   shopsTaken?: number;
   /** Campaign training points [ground, water, air]; only in campaign games. */
   trainingPoints?: number[];
+  /** A computer player taken over with the cheat "BAUER" / "Alliierte steuern". */
+  cheatControlled?: boolean;
 }
 
 export interface QueuedAction {
@@ -133,6 +135,20 @@ export interface GameState {
   terrainTables: { move: number[]; sight: number[]; agility: number[]; firepower: number[] };
   /** Global production flags per unit type (MISS+0x9C): bit 0 human players, bit 1 computer players. */
   productionFlags: number[];
+  /**
+   * Statistics window data (w_statistik.c): unit count and energy production per player and round (at most 100
+   * rounds, then shifted to 90, STAT_CreateTurnStatistic) and the own units destroyed since the end of the player's
+   * last turn (STAT_StoreUnitAsDestroyed, at most 100 per player).
+   */
+  statistics?: { units: number[][]; energy: number[][]; destroyed: { type: number; experience: number; field: number; name?: string }[][]; lastDestroyed?: number };
+  /**
+   * Setup options per player (SDI_1C.EXE per-player settings block 0x4a4ca0): in hot-seat games every player has his
+   * own "Alliierte angreifen" and "Units autom. betanken"; they are applied when his turn begins (FUN_00435787).
+   */
+  playerRules?: ({ attackAllies: boolean; autoRefuel: boolean } | undefined)[];
+  /** Cheat menu: submerged enemy submarines are shown (DAT_004e2f00) / computer moves are skipped (DAT_004c8e84). */
+  cheatSubmarinesVisible?: boolean;
+  cheatSkipComputer?: boolean;
   /** Hit points of attacked structures per field (SDI_1C.EXE list 0x4b9450: default 10 points, divisor 320). */
   structureHp?: Record<number, { hp: number; divisor: number }>;
   /** Tyre tracks: direction mask per field (SDI_1C.EXE g_Tracks 0x4b4200, cleared for every new map). */

@@ -125,3 +125,20 @@ test('while the computer moves only the statistics window with the progress bar 
   expect(await page.evaluate(() => (window as any).bi3app.running.game.isHumanTurn())).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test('the statistics window has the six tabs of the original (w_statistik.c, manual p. 52)', async ({ page }) => {
+  const errors: string[] = [];
+  await openMission(page, 103, errors);
+  await page.click('[data-cmd="Statistikfenster"]');
+  const win = page.locator('.statwin');
+  expect(await win.evaluate((e: HTMLElement) => [e.offsetWidth, e.offsetHeight])).toEqual([272, 200]);
+  for (const t of ['Vernichtete eigene Einheiten', 'Energiehaushalt', 'Kartendaten', 'Allianzen', 'Top 5', 'Anzahl der Einheiten']) {
+    await win.locator(`[data-cmd="${t}"]`).click();
+    await expect(win.locator(`[data-cmd="${t}"]`)).toHaveCount(0); // the active tab is part of the background
+  }
+  await win.locator('[data-cmd="Top 5"]').click();
+  expect(await win.locator('[data-row]').count()).toBeGreaterThan(0);
+  await win.locator('[data-cmd="Statistik schließen"]').click();
+  await expect(win).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

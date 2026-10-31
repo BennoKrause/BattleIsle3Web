@@ -132,4 +132,32 @@ describe.skipIf(!hasGameData)('rules from the EXE pass', () => {
     expect(inside.owner).toBe(0);
     expect(inside.flags & (UnitFlag.DONE | UnitFlag.ENTERED)).toBe(0);
   });
+
+  it('in hot-seat games every player keeps his own setup options (FUN_00435787)', async () => {
+    const { g, state } = await start();
+    state.playerRules = state.players.map((p) => ({ attackAllies: p.index === 1, autoRefuel: p.index === 1 }));
+    g.applyPlayerRules(0);
+    expect(g.options.attackAllies).toBe(false);
+    const next = state.players.find((p) => p.index === 1 && p.alive);
+    if (!next) return;
+    for (let i = 0; i < 6 && state.activePlayer !== 1; i++) g.endTurn();
+    expect(state.activePlayer).toBe(1);
+    expect(g.options.attackAllies).toBe(true);
+    expect(state.ruleFlags & 0x180).toBe(0x180);
+  });
+});
+
+describe('cheats (w_sdi_cheat.c)', () => {
+  it('"ewald" enables the cheat menu on F9, ESC disables it, "BAUER" is reported', async () => {
+    const { CheatWatcher } = await import('../src/engine/cheats.ts');
+    const w = new CheatWatcher();
+    expect(w.key('F9')).toBeNull();
+    for (const k of 'ewald') w.key(k);
+    expect(w.key('F9')).toBe('menu');
+    w.key('Escape');
+    expect(w.key('F9')).toBeNull();
+    let r = null;
+    for (const k of 'BAUER') r = w.key(k);
+    expect(r).toBe('bauer');
+  });
 });

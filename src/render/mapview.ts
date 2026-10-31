@@ -106,6 +106,12 @@ export class MapRenderer {
     }
   }
 
+  private cursorFrames: HTMLCanvasElement[][] = [];
+  private cursorFrame = 0;
+  private cursorTime = 0;
+  /** LIB/CURS000: [24, 36, 48 pixel sets][4 frames]. */
+  setCursorFrames(sets: HTMLCanvasElement[][]) { this.cursorFrames = sets; }
+
   private roadSheets: SpriteSheet[] = [];
   private trackPieces: Uint8Array[] = [];
   /** LIB/LAYR000..006 pieces (see roads.ts); without them roads are drawn with the generic sprite. */
@@ -351,8 +357,17 @@ export class MapRenderer {
       const scheme = chroma[Math.min(u.owner, 6)]?.scheme ?? 12;
       this.drawUnitIcon(ctx, u.type, scheme, hl.moving.px * this.zoom - this.scrollX, hl.moving.py * this.zoom - this.scrollY, size, hl.moving.dir);
     }
-    for (const [f, color] of [[hl.selected, '#ffff60'], [hl.cursor, '#ffffff']] as const) {
-      if (f === undefined || f < 0) continue;
+    // map cursor of the original (LIB/CURS000, CU01xx 24 / CU02xx 36 / CU03xx 48 pixels): four frames, the next one
+    // every 20 ticks while the map window is idle (MPW_SystemTask, DAT_004d6059)
+    const cursorSet = this.cursorFrames.length ? this.cursorFrames[this.zoom <= 1 ? 0 : this.zoom <= 1.5 ? 1 : 2] : null;
+    if (cursorSet && hl.cursor !== undefined && hl.cursor >= 0) {
+      if (time - this.lastInput >= 45 * 17 && time - this.cursorTime >= 20 * 17) { this.cursorFrame = (this.cursorFrame + 1) & 3; this.cursorTime = time; }
+      const p = this.fieldPixel(hl.cursor % s.width, Math.floor(hl.cursor / s.width));
+      const pic = cursorSet[this.cursorFrame];
+      if (pic) ctx.drawImage(pic, p.x - this.scrollX, p.y - this.scrollY, size, size);
+    }
+    for (const [f, color] of [[hl.selected, '#ffff60'], [cursorSet ? undefined : hl.cursor, '#ffffff']] as const) {
+      if (f === undefined || f < 0 || (cursorSet && f === hl.cursor)) continue;
       const p = this.fieldPixel(f % s.width, Math.floor(f / s.width));
       ctx.strokeStyle = color;
       ctx.lineWidth = Math.max(1, this.zoom);

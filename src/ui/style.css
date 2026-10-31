@@ -63,3 +63,7 @@ canvas { image-rendering: pixelated; }
 .uia-hit { position: absolute; cursor: pointer; }
 .uia-fuel { position: absolute; }
 .uia-anim { position: absolute; image-rendering: pixelated; }
+
+/* statistics window (w_statistik.c) */
+.statwin { position: absolute; image-rendering: pixelated; }
+.statwin .stat-box { position: absolute; }
