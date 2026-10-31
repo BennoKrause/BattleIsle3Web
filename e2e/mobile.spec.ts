@@ -53,6 +53,8 @@ test('a mission starts full screen with header and dock; tapping a unit shows it
   await expect(page.locator('.m-card')).toBeVisible();
   expect(await page.locator('.m-card-title').textContent()).toBeTruthy();
   await page.locator('[data-action="move"]').tap();
+  // the card closes and the map grows: read the target position after the layout has settled
+  await page.waitForTimeout(400);
   const target = await page.evaluate((id) => {
     const a = (window as any).bi3app, g = a.running.game;
     const t = [...g.moveArea(id).targets.keys()].pop();
@@ -142,6 +144,7 @@ test('ending the turn from the dock hands over to the computer and back', async 
   const errors: string[] = [];
   await startMission(page, 100, errors);
   await page.locator('.m-end').tap();
+  await page.locator('.m-item[data-item="Ja"]').tap();
   // the computer moves behind the statistics window; then "Nächster Spieler" has to be confirmed
   await page.locator('.computerwin').waitFor({ timeout: 30000 });
   await page.locator('.msgbox .m-cmd').click({ timeout: 120000 });

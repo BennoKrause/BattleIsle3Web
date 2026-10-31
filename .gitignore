@@ -26,3 +26,6 @@ extracted/
 *.dll
 test-results*/
 saves/
+
+# decompiled original program (copyrighted derived material, local only)
+decompiled/

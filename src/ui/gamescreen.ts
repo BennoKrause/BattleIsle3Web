@@ -12,24 +12,31 @@ import { ComputerWindow } from './computerwindow.ts';
 import type { GameEvent, GameState, UnitState } from '../engine/state.ts';
 import { parseLib } from '../formats/lib.ts';
 import type { CombatResult } from '../engine/combat.ts';
-import { showFightPanel, type FightSide } from './fightpanel.ts';
+import { showFightPanel, type FightPanelInput, type FightSide } from './fightpanel.ts';
 import { showFightWindow } from './fightwindow.ts';
 import { UiaWindow, type UiaTarget } from './uiawindow.ts';
 import { MobileUi, type CardAction, type UnitStats } from './mobile/mobileui.ts';
 import { installTouchMap } from './mobile/touch.ts';
 import { COLORS, fitScale, setText } from './mobile/pixel.ts';
 import type { FileSource } from '../data/source.ts';
-import { environmentFor, type FightAssets } from '../render/fight3d.ts';
+import { environmentFor, type FightAssets, type FightInput3D } from '../render/fight3d.ts';
 import type { FxPlayer } from '../audio/fx.ts';
 import { NEUTRAL, UnitFlag } from '../engine/state.ts';
 import { World, shopFunction } from '../engine/world.ts';
 import { UCF } from '../engine/classes.ts';
 import { Build } from '../engine/support.ts';
 
+/** Input of a fight presentation (statistics strip and 3D scene), kept for the replay at the end of the round. */
+type RecordedFight = { panel: FightPanelInput; scene: FightInput3D };
+
 export interface ScreenHooks {
   /** Plays the video of a sequence id (resolves when done). */
   playSequence(seq: number): Promise<void>;
   showText(title: string, text: string): Promise<void>;
+  /** Ja/Nein requester (SDI_1C.EXE RQ_Requester with flag 3); resolves true for "Ja". */
+  confirm(text: string): Promise<boolean>;
+  /** Text input requester (RQ_InputRequester); null when cancelled. */
+  prompt(title: string): Promise<string | null>;
   openDiskMenu(): void;
   openSetup(): void;
   openVideoRecorder(): void;
@@ -51,10 +58,10 @@ export interface ScreenContext {
   missionName: string;
   src: FileSource;
   /** 3D fight (optional: without it only the statistics window is shown). */
-  fight?: { enabled(): boolean; load(): Promise<FightAssets>; fx: FxPlayer };
+  fight?: { enabled(): boolean; atEndOfRound?(): boolean; load(): Promise<FightAssets>; fx: FxPlayer };
 }
 
-type Mode = { kind: 'none' } | { kind: 'move'; unitId: number; area: Set<number> } | { kind: 'attack'; unitId: number; targets: Map<number, number> }
+type Mode = { kind: 'none' } | { kind: 'move'; unitId: number; area: Set<number> } | { kind: 'attack'; unitId: number; targets: Map<number, number>; fields?: Map<number, number> }
   | { kind: 'support'; unitId: number; action: 'refill' | 'repair'; targets: Set<number> }
   | { kind: 'build'; unitId: number; what: number; fields: Set<number> };
 
@@ -276,7 +283,7 @@ export class GameScreen {
     const s = this.frozen && this.frozenState ? this.frozenState : this.game.state;
     const hl = {
       move: this.mode.kind === 'move' ? this.mode.area : undefined,
-      attack: this.mode.kind === 'attack' ? new Set([...this.mode.targets.keys()].map((id) => this.game.w.idx(s.units[id].x, s.units[id].y))) : undefined,
+      attack: this.mode.kind === 'attack' ? new Set([...[...this.mode.targets.keys()].map((id) => this.game.w.idx(s.units[id].x, s.units[id].y)), ...(this.mode.fields?.keys() ?? [])]) : undefined,
       action: this.mode.kind === 'support' ? new Set([...this.mode.targets].map((id) => this.game.w.idx(s.units[id].x, s.units[id].y)))
         : this.mode.kind === 'build' ? this.mode.fields : undefined,
       selected: this.selected >= 0 && s.units[this.selected]?.alive ? this.game.w.idx(s.units[this.selected].x, s.units[this.selected].y) : undefined,
@@ -410,6 +417,7 @@ export class GameScreen {
     if (this.mode.kind === 'attack') {
       const t = s.unitAt[f];
       if (t >= 0 && this.mode.targets.has(t)) { await this.chooseWeaponAndAttack(this.mode.unitId, t); return; }
+      if (t < 0 && this.mode.fields?.has(f)) { await this.attackStructure(this.mode.unitId, f); return; }
       // clicking outside: the attack is given up (manual p. 59)
       const u = s.units[this.mode.unitId];
       this.mode = { kind: 'none' };
@@ -431,7 +439,8 @@ export class GameScreen {
     if (this.mode.kind === 'move') { this.mode = { kind: 'none' }; this.closeChip(); }
     const uid = s.unitAt[f];
     const shopId = s.shopAt[f];
-    if (uid >= 0 && s.units[uid].owner === s.activePlayer && (!(s.units[uid].flags & UnitFlag.DONE) || this.cargoCanLeave(s.units[uid]))) {
+    // the chip window also opens for finished own units and allied computer units: they can still be named (chip "?")
+    if (uid >= 0 && ((s.units[uid].owner === s.activePlayer && (!(s.units[uid].flags & UnitFlag.DONE) || this.cargoCanLeave(s.units[uid]))) || (!this.mobile && g.canRenameUnit(uid)))) {
       this.selected = uid;
       if (double || true) this.openChip(uid);
     } else if (shopId >= 0 && (double || uid < 0) && s.shops[shopId].owner === s.activePlayer) {
@@ -458,10 +467,11 @@ export class GameScreen {
     const chips: [string, string, () => void][] = [];
     if (g.canMove(u)) chips.push(['C01_03', 'Bewegen', () => this.startMove(unitId)]);
     const targets = g.attackTargets(unitId);
-    if (targets.length) chips.push(['C01_04', 'Angriff', () => this.startAttack(unitId)]);
+    if (targets.length || g.structureTargets(unitId).length) chips.push(['C01_04', 'Angriff', () => this.startAttack(unitId)]);
     if (u.cargo.length) chips.push(['C01_17', 'Transporter', () => this.openCargo(unitId)]);
     for (const cmd of this.unitCommands(unitId)) chips.push([cmd.icon, cmd.title, cmd.run]);
-    chips.push(['C01_11', 'Info', () => this.showUnitInfo(unitId)]);
+    // chip "?" (event 11): give the unit a name (manual p. 60 "Eigenname"); the unit information is the UIA window
+    if (g.canRenameUnit(unitId)) chips.push(['C01_11', 'Eigenname', () => void this.renameUnit(unitId)]);
     chips.push(['C01_02', 'Schließen', () => { if ((u.flags & UnitFlag.MOVED) || (u.flags & UnitFlag.ATTACKED)) g.skipUnit(unitId); this.closeChip(); this.mode = { kind: 'none' }; this.dirty = true; }]);
     const x0 = 33, step = 32.3;
     chips.forEach(([name, title, fn], i) => button(chip, a, 'CMSK000', name, Math.round(x0 + i * step), 20, fn, title).dataset.cmd = title);
@@ -473,10 +483,11 @@ export class GameScreen {
     const g = this.game, s = g.state, u = s.units[unitId], c = g.data.unitClasses[u.type];
     const actions: CardAction[] = [];
     if (g.canMove(u)) actions.push({ id: 'move', label: 'Bewegen', primary: true, run: () => this.startMove(unitId) });
-    if (g.attackTargets(unitId).length) actions.push({ id: 'attack', label: 'Angriff', primary: true, run: () => this.startAttack(unitId) });
+    if (g.attackTargets(unitId).length || g.structureTargets(unitId).length) actions.push({ id: 'attack', label: 'Angriff', primary: true, run: () => this.startAttack(unitId) });
     if (u.cargo.length) actions.push({ id: 'cargo', label: 'Ladung', run: () => this.openCargo(unitId) });
     for (const cmd of this.unitCommands(unitId)) actions.push({ id: cmd.id, label: cmd.short, run: cmd.run });
     actions.push({ id: 'info', label: 'Info', run: () => this.showUnitInfo(unitId) });
+    if (g.canRenameUnit(unitId)) actions.push({ id: 'name', label: 'Name', run: () => void this.renameUnit(unitId) });
     actions.push({ id: 'done', label: 'Fertig', run: () => { if ((u.flags & UnitFlag.MOVED) || (u.flags & UnitFlag.ATTACKED)) g.skipUnit(unitId); this.closeChip(); this.mode = { kind: 'none' }; this.dirty = true; } });
     this.mobile!.showCard({
       title: c.name, subtitle: c.description, unit: { type: u.type, scheme: this.ctx.chroma[Math.min(u.owner, 6)]?.scheme ?? 12 },
@@ -584,7 +595,8 @@ export class GameScreen {
 
   private startAttack(unitId: number) {
     const t = this.game.attackTargets(unitId);
-    this.mode = { kind: 'attack', unitId, targets: new Map(t.map((x) => [x.unitId, x.weapons])) };
+    const f = this.game.structureTargets(unitId);
+    this.mode = { kind: 'attack', unitId, targets: new Map(t.map((x) => [x.unitId, x.weapons])), fields: new Map(f.map((x) => [x.field, x.weapons])) };
     this.closeChip();
     this.dirty = true;
   }
@@ -607,12 +619,33 @@ export class GameScreen {
     return u.cargo.some((id) => this.game.canMove(this.game.state.units[id]));
   }
 
+  /** Attack on a structure field (ATT_AttackStructure): the first usable weapon, statistics of the hit points. */
+  private async attackStructure(unitId: number, field: number) {
+    const g = this.game, u = g.state.units[unitId];
+    this.mode = { kind: 'none' };
+    this.closeChip();
+    this.busy = true;
+    const res = g.attackStructure(unitId, field);
+    await this.playEvents(res.events);
+    this.busy = false;
+    if (u.alive && !(u.flags & UnitFlag.DONE)) this.openChip(unitId);
+    this.afterHumanAction();
+  }
+
   private async chooseWeaponAndAttack(unitId: number, targetId: number) {
     if (this.weaponWin) return;
     const g = this.game, a = this.ctx.assets;
     const u = g.state.units[unitId];
     const c = g.data.unitClasses[u.type];
     const mask = (this.mode.kind === 'attack' && this.mode.targets.get(targetId)) || 0;
+    // main mode 0x9c4: an allied target is only attacked after "Das ist Ihr Verbündeter|Wollen Sie ihn wirklich|angreifen?"
+    const target = g.state.units[targetId];
+    if (target.owner !== u.owner && target.owner < 6 && g.w.isAllied(u.owner, target.owner)) {
+      this.weaponWin = { win: this.ctx.desktop.layer, cancel: () => {} };
+      const yes = await this.hooks.confirm(this.uiText(0x29, 'Das ist Ihr Verbündeter|Wollen Sie ihn wirklich|angreifen?'));
+      this.weaponWin = null;
+      if (!yes) return;
+    }
     const weapons = c.weapons.map((w, i) => ({ w, i })).filter(({ i }) => mask & (1 << i));
     let weapon = weapons[0].i;
     if (weapons.length > 1 && this.mobile) {
@@ -651,7 +684,7 @@ export class GameScreen {
 
   private afterHumanAction() {
     this.dirty = true;
-    if (this.game.state.outcome) this.hooks.onOutcome();
+    if (this.game.state.outcome) void this.replayRecordedFights().then(() => this.hooks.onOutcome());
   }
 
   // ------------------------------------------------------------------ event presentation
@@ -679,6 +712,14 @@ export class GameScreen {
             this.flash(`${name} eingenommen`);
           }
           break;
+        case 'condition': await this.hooks.showText('', this.conditionText(e)); break;
+        case 'structure-attack': await this.showStructureAttack(e); break;
+        case 'player-out': {
+          // MCP_ShowLostPlayers: "%s - Spieler ist ausgeschieden" (text 0x4f)
+          const p = e.data.player as number;
+          await this.hooks.showText('', (this.game.data.uiTexts[0x4f] ?? '%s - Spieler ist ausgeschieden').replace('%s', this.ctx.playerNames[p] || `Spieler ${p + 1}`));
+          break;
+        }
         case 'weather': this.flash(['Sonnig', 'Leichter Regen', 'Starker Regen', 'Leichter Schneefall', 'Starker Schneefall'][e.data.weather as number] ?? ''); break;
         case 'sunk': case 'crashed': this.flash(e.kind === 'sunk' ? 'Einheit versunken' : 'Flugzeug abgestürzt'); break;
       }
@@ -695,14 +736,17 @@ export class GameScreen {
     this.hidden.add(unitId);
     const W = s.width;
     const pos = (f: number) => ({ x: (f % W) * 16, y: Math.floor(f / W) * 24 + ((f % W) & 1) * 12 });
-    const stepMs = this.game.state.players[u.owner].computer ? 70 : 90;
+    // MPW_AnimateMoveStep: one step every 3 ticks (51 ms), two steps per field: the unit is drawn at 1/6 and 5/6 of the
+    // way (field divided into 6 parts, step size 4 at the 24-pixel zoom), i.e. about 102 ms per field
+    const stepMs = 102;
     for (let i = 1; i < path.length; i++) {
       const a = pos(path[i - 1]), b = pos(path[i]);
       const dir = directionBetween(path[i - 1], path[i], W);
       const t0 = performance.now();
       for (;;) {
         const t = Math.min(1, (performance.now() - t0) / stepMs);
-        this.animating = { unitId, px: a.x + (b.x - a.x) * t, py: a.y + (b.y - a.y) * t, dir };
+        const f = t < 0.5 ? 1 / 6 : 5 / 6;
+        this.animating = { unitId, px: a.x + (b.x - a.x) * f, py: a.y + (b.y - a.y) * f, dir };
         await new Promise((r) => requestAnimationFrame(r));
         if (t >= 1) break;
       }
@@ -737,35 +781,67 @@ export class GameScreen {
     // the viewing player is shown on the left (FGT_Fight)
     const attackerLeft = a.owner === this.viewer || d.owner !== this.viewer;
     this.dirty = true;
+    const mask = this.game.data.terrain[s.terrain[d.y * s.width + d.x]]?.typeMask ?? 0;
+    const fight: RecordedFight = {
+      panel: { attacker, defender, attackerLeft },
+      scene: {
+        attacker: { type: a.type, count: attacker.count, losses: attacker.losses, scheme: attacker.scheme, weaponName: attacker.weapon },
+        defender: { type: d.type, count: defender.count, losses: defender.losses, scheme: defender.scheme, weaponName: defender.weapon },
+        defenderFiresBack: dWeapon >= 0, attackerLeft, weather: s.weather, environment: environmentFor(mask),
+      },
+    };
+    // "Kampf: am Ende der Runde": only the statistics now, the fight is recorded (32 slots, FGT_RecordFight)
+    if (this.ctx.fight?.atEndOfRound?.()) {
+      if (this.recordedFights.length >= 32) this.recordedFights.shift();
+      this.recordedFights.push(fight);
+    }
+    await this.presentFight(fight, !!this.ctx.fight?.enabled());
+  }
+
+  private recordedFights: RecordedFight[] = [];
+
+  /**
+   * Attack on a structure: the original shows the fight window with a structure as the defender (fight DLL object
+   * kinds 0x41..0x47); here the statistics strip shows the hit points of the structure (count) and the damage (losses).
+   */
+  private async showStructureAttack(e: GameEvent) {
+    const s = this.game.state, cls = this.game.data.unitClasses;
+    const a = s.units[e.data.attacker as number], weapon = e.data.weapon as number;
+    const ov = e.data.overlay as number, mask = this.game.data.terrain[ov]?.typeMask ?? 0;
+    const name = mask & 8 ? 'Schiene' : mask & 4 ? 'Graben' : mask & 2 ? 'Weg' : 'Straße';
+    const scheme = (o: number) => this.ctx.chroma[Math.min(o, 6)].scheme;
+    const hp = e.data.hp as number, dmg = e.data.damage as number;
+    const attacker: FightSide = { name: cls[a.type].name, weapon: cls[a.type].weaponNames[weapon] ?? '', scheme: scheme(a.owner), count: a.group, losses: 0,
+      firepower: Math.max(1, cls[a.type].weapons[weapon]?.damage ?? 1), armor: Math.max(1, cls[a.type].armor), ground: 1, field: 100, xpBefore: a.experience, xpAfter: a.experience };
+    const defender: FightSide = { name, weapon: '', scheme: 12, count: hp, losses: dmg, firepower: 1, armor: 1, ground: 1, field: 100, xpBefore: 0, xpAfter: 0 };
+    this.dirty = true;
+    if (this.mobile) { await this.mobile.showFight({ fight3d: null, fx: this.ctx.fight!.fx, panel: { attacker, defender, attackerLeft: true }, scene: null }); return; }
+    await showFightPanel(this.ctx.desktop.layer, this.ctx.assets, this.ctx.fonts, { attacker, defender, attackerLeft: true });
+  }
+
+  /** Shows a fight as 3D fight window (with the statistics strip) or as the statistics window alone. */
+  private async presentFight(f: RecordedFight, in3d: boolean) {
+    const fight3d = in3d && this.ctx.fight ? await this.ctx.fight.load().catch(() => null) : null;
     if (this.mobile) {
-      const fight3d = this.ctx.fight?.enabled() ? await this.ctx.fight.load().catch(() => null) : null;
-      const mask = this.game.data.terrain[s.terrain[d.y * s.width + d.x]]?.typeMask ?? 0;
-      await this.mobile.showFight({
-        fight3d, fx: this.ctx.fight!.fx, panel: { attacker, defender, attackerLeft },
-        scene: fight3d ? {
-          attacker: { type: a.type, count: attacker.count, losses: attacker.losses, scheme: attacker.scheme, weaponName: attacker.weapon },
-          defender: { type: d.type, count: defender.count, losses: defender.losses, scheme: defender.scheme, weaponName: defender.weapon },
-          defenderFiresBack: dWeapon >= 0, attackerLeft, weather: s.weather, environment: environmentFor(mask),
-        } : null,
-      });
+      await this.mobile.showFight({ fight3d, fx: this.ctx.fight!.fx, panel: f.panel, scene: fight3d ? f.scene : null });
       return;
     }
-    if (this.ctx.fight?.enabled()) {
-      const fight3d = await this.ctx.fight.load().catch(() => null);
-      if (fight3d) {
-        const mask = this.game.data.terrain[s.terrain[d.y * s.width + d.x]]?.typeMask ?? 0;
-        await showFightWindow(this.ctx.desktop.layer, {
-          assets: this.ctx.assets, fonts: this.ctx.fonts, fight3d, fx: this.ctx.fight.fx, panel: { attacker, defender, attackerLeft },
-          scene: {
-            attacker: { type: a.type, count: attacker.count, losses: attacker.losses, scheme: attacker.scheme, weaponName: attacker.weapon },
-            defender: { type: d.type, count: defender.count, losses: defender.losses, scheme: defender.scheme, weaponName: defender.weapon },
-            defenderFiresBack: dWeapon >= 0, attackerLeft, weather: s.weather, environment: environmentFor(mask),
-          },
-        });
-        return;
-      }
+    if (fight3d) {
+      await showFightWindow(this.ctx.desktop.layer, { assets: this.ctx.assets, fonts: this.ctx.fonts, fight3d, fx: this.ctx.fight!.fx, panel: f.panel, scene: f.scene });
+      return;
     }
-    await showFightPanel(this.ctx.desktop.layer, this.ctx.assets, this.ctx.fonts, { attacker, defender, attackerLeft });
+    await showFightPanel(this.ctx.desktop.layer, this.ctx.assets, this.ctx.fonts, f.panel);
+  }
+
+  /**
+   * FGT_ReplayFights: at the end of a human turn (and when the mission ends) the recorded fights are shown in 3D one
+   * after the other, then the list is cleared.
+   */
+  private async replayRecordedFights() {
+    const list = this.recordedFights;
+    this.recordedFights = [];
+    if (!this.ctx.fight?.atEndOfRound?.()) return;
+    for (const f of list) await this.presentFight(f, true);
   }
 
   private flash(text: string) {
@@ -782,12 +858,54 @@ export class GameScreen {
     this.closeChip();
     this.mode = { kind: 'none' };
     this.busy = true;
+    // main mode 3000: "Sind Sie sicher,daß Sie Ihren Zug beenden wollen?" (text 0x16); "Nein" returns to the map
+    if (!(await this.hooks.confirm(this.uiText(0x16, 'Sind Sie sicher, daß Sie Ihren Zug beenden wollen?')))) {
+      this.busy = false;
+      this.dirty = true;
+      return;
+    }
+    await this.replayRecordedFights();
     const res = this.game.endTurn();
     await this.playEvents(res.events);
     this.hooks.onAutosave();
     await this.runComputerTurns();
     this.busy = false;
     this.dirty = true;
+  }
+
+  /**
+   * Announcement of a fulfilled mission goal (GA_CheckMissionGoals): 8 "%s :|Spieler verliert|alle Einheiten" (0x82),
+   * 9 "%s :|Spieler erobert Shop:|%s" (0x83), 11 "%s :|Spieler besetzt|Zielposition" (0x85), 12 "%s :|vernichtet von:|%s"
+   * with the unit type (0x86), 14 "%s :|Spieler verliert Shop:|%s" (0x84).
+   */
+  private conditionText(e: GameEvent): string {
+    const g = this.game, d = e.data as { type: number; param: number; shop: number };
+    const player = (p: number) => this.ctx.playerNames[p] || `Spieler ${p + 1}`;
+    const shopName = (i: number) => { const sh = g.shopByIndex(i); return sh ? this.ctx.shopNames.get(sh.nameIndex) ?? '' : ''; };
+    const fill = (n: number, ...args: string[]) => { let t = g.data.uiTexts[n] ?? ''; for (const a of args) t = t.replace('%s', a); return t.replace(/\|/g, '\n'); };
+    switch (d.type) {
+      case 8: return fill(0x82, player(d.param));
+      case 9: return fill(0x83, player(d.param), shopName(d.shop));
+      case 11: return fill(0x85, player(d.shop));
+      case 12: return fill(0x86, g.data.unitClasses[d.param]?.name ?? '', player(d.shop));
+      case 14: return fill(0x84, player(d.param), shopName(d.shop));
+      default: return '';
+    }
+  }
+
+  /** Chip "?": "Unitnamen eingeben:" (text 0x35, SDI_1C.EXE WU_EditUnitName), at most 16 characters. */
+  private async renameUnit(unitId: number) {
+    this.closeChip();
+    const name = await this.hooks.prompt(this.uiText(0x35, 'Unitnamen eingeben:'));
+    if (name === null) return;
+    this.game.renameUnit(unitId, name);
+    this.dirty = true;
+    if (this.mobile && this.selected === unitId) this.openMobileCard(unitId);
+  }
+
+  /** Text n of TEXT000.TXT (the requester texts of the original), "|" as line break. */
+  private uiText(n: number, fallback: string) {
+    return (this.game.data.uiTexts[n] ?? fallback).replace(/\|/g, '\n');
   }
 
   /** Plays the turns of computer players until a human player is to move or the game ends. */
@@ -869,7 +987,7 @@ export class GameScreen {
     for (const e of events) {
       this.eventCursor = Math.max(this.eventCursor, e.seq + 1);
       if (e.kind === 'unit-destroyed') this.explode(e);
-      else if (e.kind === 'video' || e.kind === 'victory' || e.kind === 'defeat' || (e.kind === 'message' && e.data.type === 'text')) {
+      else if (e.kind === 'video' || e.kind === 'victory' || e.kind === 'defeat' || e.kind === 'condition' || e.kind === 'player-out' || (e.kind === 'message' && e.data.type === 'text')) {
         const keep = this.frozenState;
         this.frozen = false;
         await this.playEvents([e]);

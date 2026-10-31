@@ -146,6 +146,23 @@ export class Game {
     return { ok: true, events };
   }
 
+  /**
+   * Tyre tracks (SDI_1C.EXE MPW_AnimateMoveStep): every step of an animated move marks the direction on both fields
+   * (bit d on the field it leaves, bit d+3 on the one it enters). Only the moves of human players are animated, and
+   * classes with flag 0x1000 (NO_TRAILS) leave no tracks.
+   */
+  private leaveTracks(u: UnitState, path: number[]) {
+    const s = this.s;
+    if (s.players[u.owner]?.computer || (this.w.cls(u).flags & UCF.NO_TRAILS) || path.length < 2) return;
+    const t = (s.tracks ??= new Array<number>(s.width * s.height).fill(0));
+    for (let k = 1; k < path.length; k++) {
+      const a = path[k - 1], b = path[k];
+      const d = directionTo(a % s.width, Math.trunc(a / s.width), b % s.width, Math.trunc(b / s.width));
+      t[a] |= 1 << d;
+      t[b] |= 1 << ((d + 3) % 6);
+    }
+  }
+
   private performMove(u: UnitState, target: number, path: number[]) {
     const s = this.s, w = this.w;
     const c = w.cls(u);
@@ -162,6 +179,7 @@ export class Game {
     if (!(s.ruleFlags & RF.NO_FUEL_USE)) u.fuel = Math.max(0, u.fuel - steps * c.fuelUsage);
     u.moved += path.length - 1;
     u.flags |= UnitFlag.MOVED;
+    this.leaveTracks(u, path);
     this.emit('message', { type: 'move', unitId: u.id, path }, u.owner);
 
     // destination: building, transporter, pick-up or empty field
@@ -201,7 +219,7 @@ export class Game {
     this.afterAction();
   }
 
-  private hasAttackTargets(u: UnitState) { return this.attackTargets(u.id).length > 0; }
+  private hasAttackTargets(u: UnitState) { return this.attackTargets(u.id).length > 0 || this.structureTargets(u.id).length > 0; }
 
   private detach(u: UnitState) {
     const s = this.s;
@@ -261,6 +279,9 @@ export class Game {
         if (prev < NEUTRAL) s.players[prev].lost++;
         s.players[by.owner].captured++;
         cu.owner = by.owner;
+        // GA_F0A_CaptureShop: the flags of the captured units are reset (mask 0xf89f), they can act this turn
+        cu.flags &= UnitFlag.ASCENDED | UnitFlag.DIVED;
+        cu.moved = 0;
       }
     }
     this.emit('building-captured', { shopId, from: prev, to: by.owner, sequence: 0 }, by.owner);
@@ -288,6 +309,62 @@ export class Game {
       this.fight(e, bestWeapon(w.cls(e), mask), u);
       if (s.ruleFlags & RF.SINGLE_AMBUSH) break;
     }
+  }
+
+  /**
+   * Fields with a destructible structure a unit can attack (SDI_1C.EXE ATT_ListTargets, FUN_0043e607): weapons with
+   * damage, ammunition and weapon flag 0x200 (raw weapon flags, not a supply slot) may fire at visible empty fields
+   * (no unit, no building) whose overlay is destructible (terrain record byte 2 bit 0) and carries a road, path,
+   * trench or rail (type bits 0..3).
+   */
+  structureTargets(unitId: number): { field: number; weapons: number }[] {
+    const s = this.s, u = s.units[unitId];
+    if (!u.alive || u.container || u.owner !== s.activePlayer || s.outcome) return [];
+    if (u.flags & (UnitFlag.ATTACKED | UnitFlag.DONE)) return [];
+    const c = this.w.cls(u);
+    if ((u.flags & UnitFlag.MOVED) && (c.flags & COOLDOWN)) return [];
+    const out: { field: number; weapons: number }[] = [];
+    for (let f = 0; f < s.width * s.height; f++) {
+      const ov = s.overlay[f];
+      if (ov < 0 || s.unitAt[f] >= 0 || s.shopAt[f] >= 0 || !(s.vision[f] & (1 << u.owner))) continue;
+      const t = this.data.terrain[ov];
+      if (!t || !(t.raw[2] & 1) || !(t.typeMask & 0xf)) continue;
+      const x = f % s.width, y = Math.trunc(f / s.width), d = distance(u.x, u.y, x, y);
+      let mask = 0;
+      c.weapons.forEach((w, i) => {
+        if (w.damage > 0 && u.ammo[i] > 0 && !(w.rawTargets & 0xf) && (w.rawTargets & 0x200) && d >= Math.max(1, w.minRange) && d <= w.maxRange) mask |= 1 << i;
+      });
+      if (mask) out.push({ field: f, weapons: mask });
+    }
+    return out;
+  }
+
+  /**
+   * Attack on a structure (SDI_1C.EXE ATT_AttackStructure, FUN_004241f6): a field starts with 10 hit points (divisor
+   * 320); every hit removes max(1, experience - 2) + weapon damage / divisor points; at 0 the overlay is removed.
+   * Ammunition is used (unless rule 0x2000); the attacker gains no experience.
+   */
+  attackStructure(unitId: number, field: number, weapon?: number): CommandResult {
+    const s = this.s, u = s.units[unitId];
+    const t = this.structureTargets(unitId).find((x) => x.field === field);
+    if (!t) return { ok: false, reason: 'not a valid target', events: [] };
+    const c = this.w.cls(u);
+    const wpn = weapon !== undefined && (t.weapons & (1 << weapon)) ? weapon : bestWeapon(c, t.weapons);
+    const { events } = this.collect(() => {
+      const hpMap = (s.structureHp ??= {});
+      const entry = hpMap[field] ?? { hp: 10, divisor: 320 };
+      let dmg = Math.max(1, u.experience - 2) + Math.trunc(c.weapons[wpn].damage / entry.divisor);
+      if (dmg > entry.hp) dmg = entry.hp;
+      const destroyed = dmg === entry.hp;
+      this.emit('structure-attack', { attacker: u.id, field, weapon: wpn, hp: entry.hp, damage: dmg, destroyed, overlay: s.overlay[field] }, u.owner);
+      if (destroyed) { delete hpMap[field]; s.overlay[field] = -1; } else hpMap[field] = { hp: entry.hp - dmg, divisor: entry.divisor };
+      if (!(s.ruleFlags & RF.NO_AMMO_USE)) u.ammo[wpn] = Math.max(0, u.ammo[wpn] - 1);
+      u.flags |= UnitFlag.ATTACKED;
+      if (!this.canRetreat(u)) this.unitDone(u);
+      updateVisionAll(this.w);
+      this.afterAction();
+    });
+    return { ok: true, events };
   }
 
   attack(unitId: number, targetId: number, weapon?: number): CommandResult {
@@ -523,20 +600,38 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ conditions
-  /** FUN_00415d36. Not evaluated on the training level (difficulty code 1). */
+  /**
+   * GA_CheckMissionGoals (SDI_1C.EXE FUN_00415d36), after every action: only on campaign maps (game type 1) and not on
+   * the training level. Every fulfilled condition is announced (texts 0x82..0x86, event 'condition') and consumed; a
+   * fulfilled victory condition counts for good even if it is undone later (DAT_004bfae5). Victory when the count
+   * reaches the required number (with fewer than 2 required: any), defeat as soon as a defeat condition is fulfilled.
+   */
   checkConditions() {
     const s = this.s;
-    if (s.outcome || s.difficulty === 0) return;
-    for (const c of s.defeatConditions) {
-      if (this.conditionMet(c)) {
-        s.outcome = { result: 'defeat', turn: s.turn, conditions: [c.type] };
-        this.emit('defeat', { condition: c });
-        return;
-      }
+    if (s.outcome || s.difficulty === 0 || (s.gameType ?? 1) !== 1) return;
+    let defeat: QueuedAction | null = null;
+    for (const c of [...s.defeatConditions]) {
+      if (!this.conditionMet(c)) continue;
+      s.defeatConditions = s.defeatConditions.filter((x) => x !== c);
+      this.emit('condition', { type: c.type, param: c.param, shop: c.shop, defeat: true });
+      defeat = c;
     }
-    const met = s.victoryConditions.filter((c) => this.conditionMet(c));
-    const required = Math.max(1, s.requiredVictoryConditions);
-    if (met.length >= required) {
+    const met: QueuedAction[] = [];
+    for (const c of [...s.victoryConditions]) {
+      if (!this.conditionMet(c)) continue;
+      s.victoryConditions = s.victoryConditions.filter((x) => x !== c);
+      this.emit('condition', { type: c.type, param: c.param, shop: c.shop, defeat: false });
+      met.push(c);
+    }
+    s.victoryMet = (s.victoryMet ?? 0) + met.length;
+    if (defeat) {
+      s.victoryMet = 0;
+      s.outcome = { result: 'defeat', turn: s.turn, conditions: [defeat.type] };
+      this.emit('defeat', { condition: defeat });
+      return;
+    }
+    const required = s.requiredVictoryConditions;
+    if (required < 2 ? s.victoryMet > 0 : s.victoryMet >= required) {
       s.outcome = { result: 'victory', turn: s.turn, conditions: met.map((c) => c.type) };
       this.emit('victory', { conditions: met });
     }
@@ -573,6 +668,9 @@ export class Game {
   endTurn(): CommandResult {
     const { events } = this.collect(() => {
       const s = this.s;
+      // multiplayer maps (game type 2): players without units and without a production building drop out, the game
+      // ends when fewer than two are left (MCP_CheckMultiPlayerGamePlayers / MCP_MultiPlayerGameCheckEnd)
+      if (s.gameType === 2 && this.eliminatePlayers()) return;
       // events of this turn that did not trigger are discarded
       s.actions = s.actions.filter((a) => !(a.turn <= s.turn && (a.playerMask === 0 || lowestBitIndex(a.playerMask) <= s.activePlayer)));
       let p = s.activePlayer;
@@ -588,6 +686,25 @@ export class Game {
       this.checkConditions();
     });
     return { ok: true, events };
+  }
+
+  /** Returns true when the multiplayer game is over (outcome set, winner or nobody). */
+  private eliminatePlayers(): boolean {
+    const s = this.s;
+    for (const pl of s.players) {
+      if (!pl.alive || pl.index >= NEUTRAL) continue;
+      const hasUnits = s.units.some((u) => u.alive && u.owner === pl.index);
+      const hasFactory = s.shops.some((sh) => sh.owner === pl.index && (shopFunction(sh) & SF.PRODUCTION));
+      if (!hasUnits && !hasFactory) {
+        pl.alive = false;
+        this.emit('player-out', { player: pl.index });
+      }
+    }
+    const left = s.players.filter((p) => p.alive && p.index < NEUTRAL);
+    if (left.length >= 2) return false;
+    s.outcome = { result: left.length ? 'victory' : 'defeat', turn: s.turn, conditions: [], winner: left[0]?.index };
+    this.emit(left.length ? 'victory' : 'defeat', { winner: left[0]?.index ?? -1 });
+    return true;
   }
 
   /**
@@ -822,6 +939,25 @@ export class Game {
     if (u.experience >= MAX_XP || (u.flags & UnitFlag.ENTERED)) return false;
     const pts = s.players[u.owner].trainingPoints;
     return !!pts && pts[trainingCategory(this.w.cls(u).flags >>> 0)] > 0;
+  }
+
+  /**
+   * Chip "?" (event 11, SDI_1C.EXE WU_EditUnitName): own units and units of allied computer players can be named
+   * (manual p. 60 "Eigenname", at most 16 characters, may be renamed); enemy units cannot.
+   */
+  canRenameUnit(unitId: number): boolean {
+    const s = this.s, u = s.units[unitId];
+    if (!u?.alive || s.outcome) return false;
+    const me = s.activePlayer;
+    return u.owner === me || (u.owner < NEUTRAL && this.w.isAllied(me, u.owner) && s.players[u.owner].computer);
+  }
+
+  renameUnit(unitId: number, name: string): CommandResult {
+    if (!this.canRenameUnit(unitId)) return { ok: false, reason: 'cannot name this unit', events: [] };
+    const u = this.s.units[unitId];
+    const n = name.slice(0, 16).trim();
+    if (n) u.name = n; else delete u.name;
+    return { ok: true, events: [] };
   }
 
   train(unitId: number): CommandResult {

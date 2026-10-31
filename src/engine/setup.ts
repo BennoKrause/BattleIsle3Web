@@ -3,7 +3,6 @@
 // energy, action sorting); deviations are marked.
 import type { GameData, LoadedMission } from '../data/gamedata.ts';
 import { ActionType, splitCategory } from '../formats/actions.ts';
-import { directionTo } from './hex.ts';
 import { isCrystal, isPlane, isShip, TT_WATER } from './classes.ts';
 import { Layer, NEUTRAL, type GameState, type QueuedAction, type UnitState } from './state.ts';
 
@@ -18,6 +17,19 @@ export interface SetupOptions {
   /** Override alliance masks (single-map mode). */
   allies?: number[];
   seed?: number;
+  /** 1 campaign map (default), 2 single multiplayer map ("Einzelne Karte starten" with player setup). */
+  gameType?: number;
+}
+
+/**
+ * Facing of a unit by its position (SDI_1C.EXE FUN_0044c9ae): left third of the map faces south-east (upper half) or
+ * north-east (lower half), the middle third south or north, the right third south-west or north-west.
+ */
+export function initialFacing(x: number, y: number, width: number, height: number): number {
+  const upper = y < height >> 1;
+  if (x <= Math.trunc(width / 3)) return upper ? 2 : 1;
+  if (x < Math.trunc((width * 2) / 3)) return upper ? 3 : 0;
+  return upper ? 4 : 5;
 }
 
 export function createUnit(state: GameState, data: GameData, type: number, owner: number, x: number, y: number): UnitState {
@@ -29,7 +41,7 @@ export function createUnit(state: GameState, data: GameData, type: number, owner
     alive: true,
     x, y,
     layer: isPlane(c) ? Layer.AIR : isShip(c) ? Layer.WATER : Layer.GROUND,
-    dir: Math.round(directionTo(x, y, state.width >> 1, state.height >> 1)),
+    dir: initialFacing(x, y, state.width, state.height),
     group: Math.max(1, c.strength),
     fuel: c.fuel,
     ammo: c.weapons.map((w) => Math.max(0, w.ammo)),
@@ -83,6 +95,8 @@ export function createGame(data: GameData, lm: LoadedMission, opt: SetupOptions)
     victoryConditions: [],
     defeatConditions: [],
     requiredVictoryConditions: Math.max(1, m.requiredVictoryConditions),
+    victoryMet: 0,
+    gameType: opt.gameType ?? 1,
     actions: [],
     laterLevels: [],
     mapChanges: m.dfLayers.map((l) => l.map((c) => ({ ...c }))),

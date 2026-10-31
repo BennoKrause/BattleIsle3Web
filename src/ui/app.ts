@@ -225,7 +225,8 @@ export class App {
     const set = this.data.sets.find((s) => s.missions.some((m) => m.fileId === fileId))!;
     const mission = set.missions.find((m) => m.fileId === fileId)!;
     const lm = await this.data.loadMission(fileId);
-    const state = createGame(this.data, lm, { setId: set.id, difficulty, computerPlayers });
+    // "Einzelne Karte starten" with player setup = game type 2: no mission goals, players drop out (MCP_*MultiPlayer*)
+    const state = createGame(this.data, lm, { setId: set.id, difficulty, computerPlayers, gameType: set.id !== 0 ? 2 : 1 });
     const game = new Game(this.data, state);
     this.applySettingsToGame(game);
     game.start();
@@ -271,10 +272,12 @@ export class App {
       assets: this.assets, fonts: this.fonts, desktop: this.desktop, renderer: this.renderer, chroma,
       playerNames, shopNames, missionName: mission.name ?? `MISS${mission.fileId}`,
       src: this.data.source,
-      fight: { enabled: () => this.settings.fightMode === '3d', load: () => (this.fightAssets ??= FightAssets.load(this.data.source)), fx: this.fx },
+      fight: { enabled: () => this.settings.fightMode === '3d', atEndOfRound: () => this.settings.fightMode === 'end', load: () => (this.fightAssets ??= FightAssets.load(this.data.source)), fx: this.fx },
     }, {
       playSequence: (seq) => this.playSequence(set, seq),
       showText: (t, x) => this.message(t, x),
+      prompt: (title) => this.prompt(title, { maxLength: 16 }),
+      confirm: async (text) => (await choose(this.desktop.layer, this.assets, this.fonts.small, text, ['Ja', 'Nein'], false)) === 0,
       openDiskMenu: () => void this.inGameDiskMenu(),
       openSetup: () => void this.setupMenu(),
       openVideoRecorder: () => void this.videoRecorder(set),
@@ -288,7 +291,11 @@ export class App {
     void this.startMusic(Math.max(0, set.missions.indexOf(mission)));
     if (fresh) {
       // password of the map (manual p. 56) and the mission briefing
-      if (r.campaign && mission.password > 0) await this.message(mission.name ?? '', `Kennwort dieser Karte: ${mission.password}`);
+      // MCP_LoadMission: a new campaign map announces its level code with text 0x7a ("Der neue Code lautet:|  %s")
+      if (r.campaign && mission.password > 0) {
+        const text = (this.data.uiTexts[0x7a] ?? 'Der neue Code lautet:|%s').replace('%s', String(mission.password)).split('|').map((l) => l.trim()).join('\n');
+        await this.message(mission.name ?? '', text);
+      }
       await this.playSequence(set, mission.terminationSeqs[1] ?? -1);
       // events triggered at the start (game.start) are presented now
       await screen.playEvents(game.state.events);
@@ -348,6 +355,17 @@ export class App {
     this.music.stop();
     r.screen.destroy();
     await this.playSequence(set, mission.terminationSeqs[won ? 2 : 3] ?? -1);
+    if (!campaign && game.state.gameType === 2) {
+      // MCP_MultiPlayerGameCheckEnd: "Gratuliere %s!|Sie haben gewonnen." (0x50) or "Alle Spieler haben verloren." (0x51),
+      // then "Wollen Sie ein neues Spiel beginnen?" (0x52): yes -> disk menu, no -> leave the game
+      const w = game.state.outcome!.winner;
+      const t = (n: number, fb: string) => (this.data.uiTexts[n] ?? fb).split('|').join('\n');
+      const winnerName = w !== undefined && w >= 0 ? (mission.playerNames?.[w] || `Spieler ${w + 1}`) : '';
+      await this.message(mission.name ?? '', winnerName ? t(0x50, 'Gratuliere %s!|Sie haben gewonnen.').replace('%s', winnerName) : t(0x51, 'Alle Spieler haben verloren.'));
+      // "Nein" ends the program in the original; a browser page cannot quit, so both answers lead to the disk menu
+      await choose(this.desktop.layer, this.assets, this.fonts.small, t(0x52, 'Wollen Sie ein neues Spiel beginnen?'), ['Ja', 'Nein'], false);
+      return this.diskMenu();
+    }
     if (!campaign) {
       await this.message(mission.name ?? '', won ? 'Mission erfolgreich beendet.' : 'Mission verloren.');
       return this.diskMenu();
@@ -378,8 +396,6 @@ export class App {
       await this.message('Battle Isle 3', 'Die Kampagne „Der Schatten des Imperiums" ist abgeschlossen.');
       return this.diskMenu();
     }
-    const nm = set.missions[next.missionIndex];
-    await this.message(nm.name ?? '', `Nächste Karte: ${nm.name}\nKennwort: ${nm.password}`);
     await this.runCampaign(next);
   }
 
@@ -481,7 +497,7 @@ export class App {
       const zoomName = st.zoom === 1 ? 'Kleine Hexfelder' : st.zoom === 1.5 ? 'Mittelgroße Hexfelder' : 'Große Hexfelder';
       const c = await choose(this.desktop.layer, this.assets, this.fonts.small, 'SETUP', [
         zoomName,
-        st.fightMode === '3d' ? 'Kampf: 3D' : 'Kampf: schnell',
+        st.fightMode === '3d' ? 'Kampf: 3D' : st.fightMode === 'fast' ? 'Kampf: schnell' : 'Kampf: am Ende der Runde',
         `Videolautstärke: ${Math.round(st.videoVolume * 7)}`,
         st.attackAllies ? 'Alliierte angreifen' : 'Alliierte nicht angreifen',
         st.autoRefuel ? 'Units autom. betanken' : 'Units manuell betanken',
@@ -494,7 +510,7 @@ export class App {
         { text: `Version ${__APP_VERSION__}`, enabled: false },
       ]);
       if (c < 0) break;
-      if (c === 1) st.fightMode = st.fightMode === '3d' ? 'fast' : '3d';
+      if (c === 1) st.fightMode = st.fightMode === '3d' ? 'fast' : st.fightMode === 'fast' ? 'end' : '3d';
       if (c === 0) st.zoom = st.zoom === 2 ? 1 : st.zoom + 0.5;
       if (c === 2) st.videoVolume = st.videoVolume >= 1 ? 0 : Math.min(1, st.videoVolume + 1 / 7);
       if (c === 3) st.attackAllies = !st.attackAllies;
@@ -590,14 +606,16 @@ export class App {
     });
   }
 
-  prompt(title: string): Promise<string | null> {
+  /** Text input requester; numeric for level codes, maxLength e.g. 16 for unit names. */
+  prompt(title: string, opts: { numeric?: boolean; maxLength?: number } = { numeric: true }): Promise<string | null> {
     if (this.mobile) {
       return new Promise((resolve) => {
         const back = el('div', 'm-modal', this.desktop.layer);
         const box = el('div', 'm-dialog msgbox', back);
         setText(el('h3', 'm-dialog-title m-field', box), title, { font: 'small', color: COLORS.accent, scale: 1.7 });
         const input = el('input', 'prompt-input m-input', box);
-        input.inputMode = 'numeric';
+        if (opts.numeric) input.inputMode = 'numeric';
+        if (opts.maxLength) input.maxLength = opts.maxLength;
         input.autocomplete = 'off';
         const row = el('div', 'm-row', box);
         const cancel = el('button', 'm-cmd', row);
@@ -616,6 +634,7 @@ export class App {
       box.style.zIndex = '6000';
       label(box, this.fonts.small.render(title, '#f0e060'), 24, 20);
       const input = el('input', 'prompt-input', box, { left: '24px', top: '50px', width: '280px' });
+      if (opts.maxLength) input.maxLength = opts.maxLength;
       input.autofocus = true;
       setTimeout(() => input.focus(), 0);
       const done = (v: string | null) => { box.remove(); resolve(v); };

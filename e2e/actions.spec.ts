@@ -106,3 +106,22 @@ test('after moving a transporter its cargo can still be unloaded', async ({ page
   expect(mode.fields).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+test('the question mark chip gives a unit its own name (manual p. 60 "Eigenname")', async ({ page }) => {
+  const errors: string[] = [];
+  await openMission(page, 104, errors);
+  const u = await page.evaluate(() => {
+    const app = (window as any).bi3app, g = app.running.game, s = g.state;
+    const u = g.unitsOf(0).find((x: any) => !x.container);
+    app.renderer.centerOn(s, u.x, u.y);
+    app.running.screen.dirty = true;
+    return { id: u.id, pos: app.running.screen.fieldToClient(g.w.idx(u.x, u.y)) };
+  });
+  await page.waitForTimeout(300);
+  await page.mouse.click(u.pos.x, u.pos.y);
+  await page.locator('.chipwin [data-cmd="Eigenname"]').click();
+  await page.locator('.prompt-input').fill('Rote Baronin');
+  await page.locator('.prompt-input').press('Enter');
+  await expect.poll(() => page.evaluate((id) => (window as any).bi3app.running.game.state.units[id].name, u.id)).toBe('Rote Baronin');
+  expect(errors).toEqual([]);
+});

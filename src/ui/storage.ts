@@ -15,7 +15,8 @@ export interface Settings {
   music: number;
   musicVolume: number;
   /** Fight presentation (manual p. 39): '3d' = 3D fight window, 'fast' = statistics only. */
-  fightMode: '3d' | 'fast';
+  /** Setup "Kampf: 3D / schnell / am Ende der Runde" (SDI_1C.EXE DAT_004cf557). */
+  fightMode: '3d' | 'fast' | 'end';
   /** Fight volume 0..1 (setup "Kampflautstärke" 0..7). */
   fightVolume: number;
   /** User interface: 'auto' (phone interface on phones), 'mobile' or 'desktop' (the original-like windows). */

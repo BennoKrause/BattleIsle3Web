@@ -107,7 +107,7 @@ export interface QueuedAction {
   newAlly: number;
 }
 
-export type Outcome = { result: 'victory' | 'defeat'; turn: number; conditions: number[] } | null;
+export type Outcome = { result: 'victory' | 'defeat'; turn: number; conditions: number[]; winner?: number } | null;
 
 export type MapChangeLayer = { x: number; y: number; terrain: number; overlay: number; unit: number }[];
 
@@ -115,7 +115,7 @@ export interface GameEvent {
   /** Sequence number within the game (stable ordering for the UI). */
   seq: number;
   kind: 'message' | 'video' | 'weather' | 'map-change' | 'alliance' | 'combat' | 'unit-destroyed' | 'building-captured'
-    | 'victory' | 'defeat' | 'turn' | 'surprise' | 'sunk' | 'crashed';
+    | 'victory' | 'defeat' | 'turn' | 'surprise' | 'sunk' | 'crashed' | 'condition' | 'player-out' | 'structure-attack';
   turn: number;
   player?: number;
   data: Record<string, unknown>;
@@ -133,6 +133,10 @@ export interface GameState {
   terrainTables: { move: number[]; sight: number[]; agility: number[]; firepower: number[] };
   /** Global production flags per unit type (MISS+0x9C): bit 0 human players, bit 1 computer players. */
   productionFlags: number[];
+  /** Hit points of attacked structures per field (SDI_1C.EXE list 0x4b9450: default 10 points, divisor 320). */
+  structureHp?: Record<number, { hp: number; divisor: number }>;
+  /** Tyre tracks: direction mask per field (SDI_1C.EXE g_Tracks 0x4b4200, cleared for every new map). */
+  tracks?: number[];
   width: number;
   height: number;
   terrain: number[];
@@ -155,6 +159,10 @@ export interface GameState {
   victoryConditions: QueuedAction[];
   defeatConditions: QueuedAction[];
   requiredVictoryConditions: number;
+  /** Victory conditions fulfilled so far (SDI_1C.EXE DAT_004bfae5): a fulfilled condition counts once and for good. */
+  victoryMet?: number;
+  /** 1 campaign map (mission goals apply), 2 single multiplayer map (players drop out, last one wins) - DAT_004cce94. */
+  gameType?: number;
   /** Pending normal actions sorted by time; later action levels wait in `laterLevels`. */
   actions: QueuedAction[];
   laterLevels: QueuedAction[];

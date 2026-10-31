@@ -109,6 +109,8 @@ test('while the computer moves only the statistics window with the progress bar 
   const errors: string[] = [];
   await openMission(page, 107, errors);
   await page.click('[data-cmd="Spielerwechsel"]');
+  // "Sind Sie sicher,daß Sie Ihren Zug beenden wollen?" (main mode 3000)
+  await page.locator('.menu-row[data-item="Ja"]').click();
   const win = page.locator('.computerwin');
   await win.waitFor({ timeout: 30000 });
   expect(await win.evaluate((e: HTMLElement) => [e.offsetWidth, e.offsetHeight])).toEqual([640, 258]);

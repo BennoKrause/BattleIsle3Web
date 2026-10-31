@@ -81,3 +81,25 @@ export function connectionMask(kind: number, nbrs: ({ x: number; y: number } | n
   }
   return m;
 }
+
+/**
+ * Colour of the tyre tracks on a ground sprite (SDI_1C.EXE): the most frequent colour of the sprite (FUN_0043868c,
+ * colour 0 ignored) shifted along its palette ramp by the shadow table built there (table 0x4cf453).
+ */
+const TRACK_SHADE: number[] = (() => {
+  const t = Array.from({ length: 256 }, (_, i) => i);
+  for (let i = 0; i < 16; i++) for (let j = 3; j >= 0; j--) t[i * 8 + j + 4] = t[i * 8 + j];
+  for (let i = 0x13; i < 0x16; i++) for (let j = 0; j < 3; j++) t[i * 8 + j + 4] = t[i * 8 + j];
+  for (let i = 0x1b; i < 0x1d; i++) for (let j = 0; j < 3; j++) t[i * 8 + j + 4] = t[i * 8 + j];
+  for (let i = 0xb; i < 0xd; i++) for (let j = 0; j < 11; j++) t[i * 16 + j] = t[i * 16 + j + 4];
+  return t;
+})();
+
+export function trackColour(groundSprite: Uint8Array | undefined): number {
+  if (!groundSprite) return 0;
+  const count = new Array<number>(256).fill(0);
+  for (let i = 0; i < TILE * TILE; i++) count[groundSprite[i]]++;
+  let best = 0, max = 0;
+  for (let c = 1; c < 256; c++) if (count[c] > max) { best = c; max = count[c]; }
+  return TRACK_SHADE[best];
+}

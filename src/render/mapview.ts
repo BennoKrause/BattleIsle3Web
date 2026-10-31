@@ -1,7 +1,7 @@
 // Map window renderer: terrain, overlays, buildings, units, fog of war and selection markers.
 // Hex layout: field (x, y) at (16x, 24y + 12(x&1)) in 24-pixel units; zoom levels 24/36/48
 // ("kleine/mittlere/große Hexfelder", TEXT000.TXT).
-import { buildRoadSet, connectionMask, roadLayers, ROAD_KIND } from './roads.ts';
+import { buildRoadSet, connectionMask, roadLayers, ROAD_KIND, trackColour } from './roads.ts';
 import type { GameData } from '../data/gamedata.ts';
 import type { GameState } from '../engine/state.ts';
 import { NEUTRAL, Layer, UnitFlag } from '../engine/state.ts';
@@ -50,6 +50,7 @@ export class MapRenderer {
     this.terrainSheet = new SpriteSheet(terrainSprites, palette, 0);
     this.unitRaw = unitSprites;
     this.terrainRaw = terrainSprites;
+    for (const ev of ['pointerdown', 'wheel', 'touchstart']) this.canvas.addEventListener(ev, () => this.noteInput(), { passive: true });
     // hex shape from a full ground tile
     this.hexMask = document.createElement('canvas');
     this.hexMask.width = this.hexMask.height = TILE;
@@ -60,10 +61,82 @@ export class MapRenderer {
     mctx.putImageData(img, 0, 0);
   }
 
+  // ------------------------------------------------------------------ field animations (SDI_1C.EXE MPW_Adapt2NewMap,
+  // MPW_SystemTask): one entry per animated ground or overlay sprite on the map. Every animation starts stopped and
+  // starts by chance (random value 1..999 of +-32767, about 1.5 % per tick); it then advances every 10/20/30 ticks
+  // (sprite flags 0x0800/0x1000/0x2000). Flag 0x0200 runs back and forth, flag 0x0100 stops after one pass and waits
+  // for the next random start. Animations only run while the map window has been idle for 45 frames.
+  private anims = new Map<number, { sprite: number; cur: number; dir: number; timer: number; delay: number; once: boolean; start: number; len: number }>();
+  private animOwner: string | null = null;
+  private animTick = -1;
+  private lastInput = -Infinity;
+  /** Input on the map (scrolling, clicks) pauses the field animations for 45 frames. */
+  noteInput(now = performance.now()) { this.lastInput = now; }
+
+  private animFrame(key: number, sprite: number, start: number, len: number): number {
+    let a = this.anims.get(key);
+    if (!a || a.sprite !== sprite) {
+      const raw = this.data.terrain[sprite]?.raw;
+      const flags = raw ? raw[2] | (raw[3] << 8) : 0;
+      const speed = flags & 0x3800;
+      a = { sprite, cur: start, dir: flags & 0x200 ? 1 : 0, timer: -1, delay: speed === 0x1000 ? 20 : speed === 0x2000 ? 30 : 10, once: (flags & 0x100) !== 0, start, len };
+      this.anims.set(key, a);
+    }
+    return a.cur;
+  }
+
+  private stepAnimations(owner: string, time: number) {
+    if (this.animOwner !== owner) { this.anims.clear(); this.animOwner = owner; this.animTick = -1; }
+    const tick = Math.floor(time / 17);
+    if (this.animTick < 0) this.animTick = tick;
+    let n = Math.min(60, tick - this.animTick);
+    this.animTick = tick;
+    if (time - this.lastInput < 45 * 17) return;
+    for (; n > 0; n--) {
+      const now = tick - n + 1;
+      for (const a of this.anims.values()) {
+        if (a.timer >= 0 ? a.timer >= now : Math.random() >= 999 / 65536) continue;
+        a.timer = now + a.delay;
+        if (a.dir === 0) {
+          if (++a.cur >= a.start + a.len) { if (a.once) a.timer = -1; a.cur = a.start; }
+        } else if (a.dir === 1) {
+          if (++a.cur >= a.start + a.len) { if (a.once) a.timer = -1; a.cur -= 2; a.dir = -1; }
+        } else if (--a.cur < a.start) { if (a.once) a.timer = -1; a.cur = a.start + 1; a.dir = 1; }
+      }
+    }
+  }
+
   private roadSheets: SpriteSheet[] = [];
+  private trackPieces: Uint8Array[] = [];
   /** LIB/LAYR000..006 pieces (see roads.ts); without them roads are drawn with the generic sprite. */
   setRoadSprites(libs: Uint8Array[][]) {
     this.roadSheets = libs.map((l) => new SpriteSheet(buildRoadSet(l), this.palette, 0));
+    this.trackPieces = libs[4] ? buildRoadSet(libs[4]) : [];
+  }
+
+  /** Tyre track piece `mask` (LAYR004) as a one-colour silhouette (SDI_1C.EXE GFX_FillMaskedSprite), cached. */
+  private trackCache = new Map<number, HTMLCanvasElement>();
+  private trackColours = new Map<number, number>();
+  private trackSprite(mask: number, ground: number): HTMLCanvasElement | null {
+    const piece = this.trackPieces[mask];
+    if (!piece) return null;
+    let colour = this.trackColours.get(ground);
+    if (colour === undefined) { colour = trackColour(this.terrainRaw[ground]); this.trackColours.set(ground, colour); }
+    const key = mask * 256 + colour;
+    let c = this.trackCache.get(key);
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = c.height = TILE;
+      const cx = c.getContext('2d')!, img = cx.createImageData(TILE, TILE);
+      for (let i = 0; i < TILE * TILE; i++) {
+        if (piece[i] === 0) continue;
+        img.data[i * 4] = this.palette[colour * 3]; img.data[i * 4 + 1] = this.palette[colour * 3 + 1];
+        img.data[i * 4 + 2] = this.palette[colour * 3 + 2]; img.data[i * 4 + 3] = 255;
+      }
+      cx.putImageData(img, 0, 0);
+      this.trackCache.set(key, c);
+    }
+    return c;
   }
 
   private buffers: CanvasRenderingContext2D[] = [];
@@ -196,10 +269,10 @@ export class MapRenderer {
     const y0 = Math.max(0, Math.floor(this.scrollY / (24 * this.zoom)) - 1);
     const y1 = Math.min(s.height - 1, Math.ceil((this.scrollY + this.canvas.height) / (24 * this.zoom)) + 1);
     const bit = 1 << viewer;
-    const animStep = Math.floor(time / 250);
-    const terrainSprite = (t: number) => {
+    this.stepAnimations(`${s.setId}:${s.missionFileId}`, time);
+    const terrainSprite = (t: number, key = -1) => {
       const d = this.data.terrain[t];
-      return d && d.animationLength > 0 ? d.animationStart + (animStep % d.animationLength) : t;
+      return d && d.animationLength > 0 ? this.animFrame(key, t, d.animationStart, d.animationLength) : t;
     };
     // Ground, overlays and the hex tints are drawn at original size (24 px tiles on the 16/24 grid) into buffers and
     // scaled as a whole: drawing every hex scaled at fractional positions left fine seams between the fields.
@@ -212,12 +285,16 @@ export class MapRenderer {
       const i = y * s.width + x;
       if (!(s.explored[i] & bit)) continue;
       const px = tx(x), py = ty(x, y);
-      this.terrainSheet.draw(terrain, terrainSprite(s.terrain[i]), px, py);
+      this.terrainSheet.draw(terrain, terrainSprite(s.terrain[i], i * 2), px, py);
       const ov = s.overlay[i];
+      // snow (weather 3/4): roads and paths use the snow-covered pieces of LAYR005/006 (FUN_0043a15f)
+      const snow = s.weather === 3 || s.weather === 4;
+      const kinds = ov >= 0 && this.roadSheets.length ? roadLayers(ov).map((k) => snow && k === ROAD_KIND.road ? ROAD_KIND.snowRoad : snow && k === ROAD_KIND.path ? ROAD_KIND.snowPath : k) : [];
+      if (ov >= 0 && !kinds.length && s.shopAt[i] < 0) this.terrainSheet.draw(terrain, terrainSprite(ov, i * 2 + 1), px, py);
+      // tyre tracks above ground and overlay, below roads and buildings, only where units are visible (WMP_DrawField)
+      const tr = s.tracks?.[i];
+      if (tr && (s.vision[i] & bit)) { const t = this.trackSprite(tr, s.terrain[i]); if (t) terrain.drawImage(t, px, py); }
       if (ov >= 0) {
-        // snow (weather 3/4): roads and paths use the snow-covered pieces of LAYR005/006 (FUN_0043a15f)
-        const snow = s.weather === 3 || s.weather === 4;
-        const kinds = this.roadSheets.length ? roadLayers(ov).map((k) => snow && k === ROAD_KIND.road ? ROAD_KIND.snowRoad : snow && k === ROAD_KIND.path ? ROAD_KIND.snowPath : k) : [];
         if (kinds.length) {
           const nb = w.neighbours(x, y);
           for (const kind of kinds) {
@@ -227,8 +304,8 @@ export class MapRenderer {
         } else if (s.shopAt[i] >= 0) {
           // buildings are drawn in the colours of their owner, like the units (neutral: slot 6)
           const owner = s.shops[s.shopAt[i]].owner;
-          this.buildingSheet(chroma[Math.min(owner, 6)]?.scheme ?? 12).draw(terrain, terrainSprite(ov), px, py);
-        } else this.terrainSheet.draw(terrain, terrainSprite(ov), px, py);
+          this.buildingSheet(chroma[Math.min(owner, 6)]?.scheme ?? 12).draw(terrain, terrainSprite(ov, i * 2 + 1), px, py);
+        }
       }
     }
     const blit = (buf: CanvasRenderingContext2D) =>
